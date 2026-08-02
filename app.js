@@ -1,915 +1,664 @@
 (function () {
   "use strict";
 
-  const C = window.WORKSHOP_CONTENT;
-  const main = document.querySelector("#main");
-  const modalRoot = document.querySelector("#modal-root");
-  const STORAGE_KEY = "the-workshop-library";
-  const SETTINGS_KEY = "the-workshop-settings";
-  const ONBOARDING_KEY = "the-workshop-onboarding";
-  const DATA_VERSION = 1;
+  const C=window.WORKSHOP_CONTENT, B=C.build2, Core=window.WorkshopCore, V=window.WorkshopVisuals;
+  const main=document.querySelector("#main");
+  let route={page:"home",mode:"edit",drawer:null};
+  let worldPainting=false;
+  let pendingConnection=[];
 
-  const defaults = { sound: false, reducedMotion: false, largeText: false, simplified: false };
-  let settings = readJSON(SETTINGS_KEY, defaults);
-  let library = loadLibrary();
-  let view = { name: "home" };
-  let current = null;
-  let saveTimer = null;
-  let drag = null;
+  Core.setRender(render);
 
-  const iconPaths = {
-    world: '<path d="M4 18 8 6l4 4 3-6 5 14Z"/><path d="M2 20h20M7 14c3-2 6-2 10 0"/>',
-    mystery: '<path d="M4 19V7l5-3 6 3 5-2v12l-5 3-6-3-5 2Z"/><path d="M9 4v13M15 7v13"/><circle cx="12" cy="11" r="2"/>',
-    evidence: '<rect x="4" y="4" width="7" height="6" rx="1"/><rect x="13" y="14" width="7" height="6" rx="1"/><path d="m11 7 5 7M7.5 10v5h5"/>',
-    inventor: '<path d="M5 15h14l-2 5H7l-2-5Z"/><path d="m8 15 1-6h6l1 6M11 9V5l2-2 2 2-2 2M4 11h3M17 11h3"/>',
-    consequence: '<path d="M12 4v16M12 9 6 5M12 14l6-4M6 5v4M18 10v4"/><circle cx="12" cy="4" r="2"/><circle cx="6" cy="10" r="2"/><circle cx="18" cy="15" r="2"/><circle cx="12" cy="20" r="2"/>',
-    save: '<path d="M5 4h12l2 2v14H5Z"/><path d="M8 4v6h8V4M8 20v-6h8v6"/>',
-    print: '<path d="M7 9V4h10v5M7 17H4v-7h16v7h-3M7 14h10v6H7Z"/>',
-    present: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="m9 21 3-4 3 4"/>',
-    back: '<path d="m15 5-7 7 7 7"/>',
-    plus: '<path d="M12 5v14M5 12h14"/>',
-    shuffle: '<path d="M4 7h3c4 0 6 10 10 10h3M17 14l3 3-3 3M4 17h3c1.5 0 2.8-1.4 4-3M14 7h3M17 4l3 3-3 3"/>',
-    review: '<path d="M5 3h14v18H5Z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
-    close: '<path d="m6 6 12 12M18 6 6 18"/>',
-    download: '<path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>',
-    trash: '<path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>',
-    copy: '<rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2"/>',
-    check: '<path d="m5 12 4 4L19 6"/>',
-    arrow: '<path d="M5 12h14M14 7l5 5-5 5"/>',
-    link: '<path d="M10 13a4 4 0 0 0 5.7 0l2.1-2.1a4 4 0 1 0-5.7-5.7L11 6.3M14 11a4 4 0 0 0-5.7 0l-2.1 2.1a4 4 0 1 0 5.7 5.7l1.1-1.1"/>',
-    mapPin: '<path d="M12 21s7-6.1 7-12A7 7 0 0 0 5 9c0 5.9 7 12 7 12Z"/><circle cx="12" cy="9" r="2.3"/>',
-    test: '<path d="m9 3 6 0M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3M8 15h8"/>',
-    replay: '<path d="M4 7v5h5M5.5 16A8 8 0 1 0 5 8"/>'
-  };
+  const E=Core.escape;
+  const appNames={world:"Tiny World Builder",mystery:"Mystery Map",evidence:"The Evidence Room",inventor:"Inventor’s Bench",consequence:"Choose the Consequence"};
+  const appPrompts={world:"Shape your world",mystery:"Look closer",evidence:"Move the evidence",inventor:"Build something that helps",consequence:"What should happen next?"};
+  const appColours={world:"#71856f",mystery:"#657d99",evidence:"#826c8e",inventor:"#b8755e",consequence:"#ad843e"};
 
-  function icon(name, cls = "") {
-    return `<svg class="${cls}" aria-hidden="true" viewBox="0 0 24 24">${iconPaths[name] || iconPaths.review}</svg>`;
+  function render(){
+    document.body.dataset.app=route.page;
+    document.body.classList.toggle("presentation",route.mode==="present");
+    document.querySelector(".topbar")?.classList.toggle("workspace-topbar",!["home","library"].includes(route.page));
+    if(route.page==="home")renderHome();
+    else if(route.page==="library")renderLibrary();
+    else if(route.page==="world")renderWorld();
+    else if(route.page==="mystery")renderMystery();
+    else if(route.page==="evidence")renderEvidence();
+    else if(route.page==="inventor")renderInventor();
+    else if(route.page==="consequence")renderConsequence();
+    refreshGlobalBar();
+    document.querySelectorAll("button").forEach(control=>{if(!control.getAttribute("aria-label")&&!control.textContent.trim()){control.setAttribute("aria-label",(control.dataset.action||"control").replace(/-/g," "));}});
   }
 
-  function nodeIcon(name) {
-    const paths = {
-      harbour: '<path d="M3 17h18M6 17l2-5h8l2 5M9 12V7h6v5M12 7V3M8 20h8"/>',
-      tower: '<path d="M7 21h10L15 4H9L7 21ZM9 9h6M8 15h8"/>',
-      tree: '<path d="M12 21v-6M7 15h10L14 11h3l-5-8-5 8h3l-3 4Z"/>',
-      star: '<path d="m12 3 2.7 5.6 6.3.9-4.5 4.4 1 6.2-5.5-2.9-5.5 2.9 1-6.2L3 9.5l6.3-.9L12 3Z"/>',
-      water: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z"/>',
-      home: '<path d="m4 11 8-7 8 7v9H4v-9ZM9 20v-6h6v6"/>',
-      gate: '<path d="M5 21V8a7 7 0 0 1 14 0v13M9 21V9a3 3 0 0 1 6 0v12M3 21h18"/>',
-      gear: '<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
-      flag: '<path d="M6 21V4M6 5h10l-2 4 2 4H6"/>'
-    };
-    return `<svg viewBox="0 0 24 24">${paths[name] || paths.mapPin || iconPaths.mapPin}</svg>`;
+  function refreshGlobalBar(){
+    const isHome=route.page==="home", current=Core.current, history=Core.historyState();
+    document.querySelector("[data-brand-title]").textContent=isHome?"The Workshop":appNames[route.page]||"The Workshop";
+    document.querySelector("[data-brand-subtitle]").textContent=isHome?"Five living places":appPrompts[route.page]||"Imagine · investigate · build";
+    document.querySelectorAll("[data-workspace-only]").forEach(el=>el.hidden=!current||isHome||route.page==="library");
+    const u=document.querySelector('[data-action="undo"]'),r=document.querySelector('[data-action="redo"]');
+    if(u)u.disabled=!history.undo;if(r)r.disabled=!history.redo;
+    const sound=document.querySelector('[data-action="toggle-sound"]'),wave=document.querySelector('[data-sound-wave]'),label=document.querySelector('[data-sound-label]');
+    if(sound)sound.setAttribute("aria-label",Core.settings.sound?"Mute sounds":"Turn on sounds");
+    if(wave)wave.style.display=Core.settings.sound?"":"none";
+    if(label)label.textContent=Core.settings.sound?"Sound":"Muted";
   }
 
-  function evidenceVisual(e){
-    const common='viewBox="0 0 120 58" role="img"';
-    if(e.type==="map")return `<div class="evidence-visual"><svg ${common} aria-label="Simple map source"><path d="M8 45 29 13l25 22 19-25 39 35M18 42c23-12 42 12 68-10"/><circle cx="73" cy="10" r="4"/></svg></div>`;
-    if(["measurement","graph","comparison"].includes(e.type))return `<div class="evidence-visual"><svg ${common} aria-label="Simple measurement graph"><path d="M12 8v40h98M18 41l21-12 20 5 22-23 22 9"/><circle cx="81" cy="11" r="3"/></svg></div>`;
-    if(e.type==="timeline")return `<div class="evidence-visual"><svg ${common} aria-label="Simple timeline"><path d="M10 30h100M25 22v16M57 22v16M92 22v16"/><circle cx="25" cy="30" r="5"/><circle cx="57" cy="30" r="5"/><circle cx="92" cy="30" r="5"/></svg></div>`;
-    if(["weather","light","temperature","water","environment"].includes(e.type))return `<div class="evidence-visual"><svg ${common} aria-label="Environmental observation"><circle cx="31" cy="20" r="10"/><path d="M31 4v6M13 20h8M41 20h8M65 42c6-21 29-22 38 0M58 43h53"/></svg></div>`;
-    if(e.type==="object")return `<div class="evidence-visual"><svg ${common} aria-label="Object record drawing"><path d="M42 45 33 17l27-8 25 20-12 18-31-2Z"/><path d="m40 21 34 18M52 12l18 32"/></svg></div>`;
-    return `<div class="evidence-visual"><svg ${common} aria-label="Written source"><path d="M29 7h61v44H29Z"/><path d="M40 18h39M40 27h31M40 36h36"/></svg></div>`;
+  function button(action,label,icon,extra="",kind="tool-button"){
+    return `<button class="${kind}" data-action="${action}" ${extra} aria-label="${E(label)}">${V.icon(icon)}<span>${E(label)}</span></button>`;
   }
 
-  function uid(prefix = "id") {
-    return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  function workspace(app,scene,tray="",context=""){
+    return `<section class="play-space app-${app}" aria-label="${appNames[app]}">
+      <div class="scene-shell">${scene}</div>
+      ${context?`<aside class="context-float" data-context>${context}</aside>`:""}
+      ${tray?`<nav class="play-tray" aria-label="Tools">${tray}</nav>`:""}
+      <div class="save-whisper"><span class="save-dot"></span><span data-save-state>Saved on this device</span></div>
+    </section>`;
   }
 
-  function escapeHTML(value = "") {
-    return String(value).replace(/[&<>'"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[ch]));
-  }
-
-  function nl2br(value = "") { return escapeHTML(value).replace(/\n/g, "<br>"); }
-  function deepCopy(value) { return JSON.parse(JSON.stringify(value)); }
-  function readJSON(key, fallback) {
-    try { return Object.assign(Array.isArray(fallback) ? [] : {}, fallback, JSON.parse(localStorage.getItem(key) || "null") || {}); }
-    catch { return deepCopy(fallback); }
-  }
-
-  function loadLibrary() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      if (!parsed || !Array.isArray(parsed.items)) return { version: DATA_VERSION, items: [] };
-      return { version: DATA_VERSION, items: parsed.items };
-    } catch { return { version: DATA_VERSION, items: [] }; }
-  }
-
-  function persistLibrary() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(library));
-  }
-
-  function applySettings() {
-    document.documentElement.style.setProperty("--text-scale", settings.largeText ? "1.12" : "1");
-    document.documentElement.style.setProperty("--motion", settings.reducedMotion ? "0" : "1");
-    document.body.classList.toggle("simplified", !!settings.simplified);
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }
-
-  function formatDate(value) {
-    return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
-  }
-
-  function announce(message) {
-    const region = document.querySelector("#toast-region");
-    const toast = document.createElement("div");
-    toast.className = "toast";
-    toast.textContent = message;
-    region.append(toast);
-    window.setTimeout(() => toast.remove(), 2600);
-  }
-
-  function tone() {
-    if (!settings.sound) return;
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 440;
-      gain.gain.setValueAtTime(.035, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + .12);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(); osc.stop(ctx.currentTime + .13);
-    } catch { /* sound is optional */ }
-  }
-
-  function svgHero() {
-    return `<svg viewBox="0 0 280 230" role="img" aria-label="A line drawing of five creative rooms">
-      <path d="M20 204h240M37 204V81l45-26 44 26v123M126 204V61l38-24 37 24v143M201 204v-88l23-17 22 17v88"/>
-      <path d="M53 204v-76h57v76M68 111V89h27v22M144 204v-82h38v82M212 204v-51h22v51"/>
-      <path d="M58 146h18v19H58zM86 146h18v19H86zM148 77h32M151 91h26M218 126h10"/>
-      <circle cx="30" cy="43" r="8"/><path d="M30 25v7M30 54v7M12 43h7M41 43h7"/>
-    </svg>`;
-  }
-
-  function appIcon(name) { return `<span class="workspace-badge">${icon(name)}</span>`; }
-
-  function appButton(app, label = "Open") {
-    return `<button class="button" type="button" data-action="open-app" data-app="${app}">${label} ${icon("arrow")}</button>`;
-  }
-
-  function renderHome() {
-    view = { name: "home" };
-    current = null;
-    document.body.classList.remove("presentation-mode");
-    const recent = [...library.items].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4);
-    main.innerHTML = `<div class="page">
-      <section class="hero">
-        <div class="hero-object decorative">${svgHero()}</div>
-        <div class="hero-copy">
-          <p class="eyebrow">Five creative spaces</p>
-          <h1>A quiet place to <span>think with your hands.</span></h1>
-          <p class="lede">Build a world. Follow a clue. Connect evidence. Test an invention. Make a difficult choice.</p>
-        </div>
-      </section>
-
-      <div class="section-heading"><div><p class="eyebrow">Choose a doorway</p><h2>Where will you work today?</h2></div></div>
-      <section class="door-grid" aria-label="The five Workshop spaces">
-        ${Object.entries(C.apps).map(([key, app]) => {
-          const latest = [...library.items].filter(i => i.app === key).sort((a,b) => b.updatedAt-a.updatedAt)[0];
-          return `<article class="door" style="--accent:${app.accent}">
-            <div class="door-icon">${icon(key)}</div>
-            <h3>${app.name}</h3><p>${app.description}</p>
-            <div class="door-preview">${app.preview}</div>
-            <div class="door-actions">
-              ${appButton(key, "Start")}
-              ${latest ? `<button class="button secondary" type="button" data-action="continue" data-id="${latest.id}">Continue</button>` : ""}
-            </div>
-          </article>`;
-        }).join("")}
-      </section>
-
-      <div class="section-heading"><div><p class="eyebrow">On this device</p><h2>Recent creations</h2></div><button class="text-button" data-action="library">View all saved work</button></div>
-      <section class="recent-strip">
-        ${recent.length ? recent.map(item => `<article class="recent-card">
-          <span class="app-label">${C.apps[item.app]?.name || "Workshop"}</span>
-          <strong>${escapeHTML(item.title)}</strong><span class="muted small">Edited ${formatDate(item.updatedAt)}</span>
-          <button class="button secondary" data-action="continue" data-id="${item.id}">Continue</button>
-        </article>`).join("") : `<p class="empty-copy">Your worlds, investigations, designs and decisions will appear here after you begin.</p>`}
-      </section>
-    </div>`;
-    window.scrollTo(0, 0);
-  }
-
-  function workspaceHeader(app, subtitle) {
-    const meta = C.apps[app];
-    return `<div class="workspace-head" style="--accent:${meta.accent}">
-      <div class="workspace-title">${appIcon(app)}<div><h1>${meta.name}</h1><p>${escapeHTML(subtitle || meta.description)}</p></div></div>
-      <div class="workspace-actions">
-        ${current ? `<span class="status-pill">Saved on this device</span>` : ""}
-        <button class="button secondary" type="button" data-action="home" aria-label="Return to The Workshop">${icon("back")}<span>Workshop</span></button>
-        ${current ? `<button class="button secondary" type="button" data-action="manual-save" aria-label="Save this work">${icon("save")}<span>Save</span></button>
-        <button class="button secondary" type="button" data-action="review" aria-label="Review this work">${icon("review")}<span>Review</span></button>` : ""}
+  function renderHome(){
+    route.mode="edit";Core.saveCurrent(true);Core.current=null;
+    const latest=[...Core.library.items].sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+    main.innerHTML=`<div class="workshop-home">
+      <div class="room-stage">${V.workshopRoom()}
+        ${homePortal("world","Map table","Raise a mountain","7%","12%","28%","35%")}
+        ${homePortal("mystery","Mystery map","Follow the light","37%","10%","23%","33%")}
+        ${homePortal("evidence","Evidence wall","Reveal a clue","65%","7%","30%","38%")}
+        ${homePortal("inventor","Inventor’s bench","Make it move","7%","50%","41%","40%")}
+        ${homePortal("consequence","Branching road","Change the scene","53%","48%","42%","43%")}
+        <button class="portfolio-drawer" data-action="library" aria-label="Open saved creations">${V.icon("folder")}<span>Creation drawer</span><b>${Core.library.items.length}</b></button>
       </div>
+      <div class="home-caption"><p>The Workshop</p><h1>Touch a place. See it change.</h1><span>Five worlds for imagining, investigating and building.</span></div>
+      ${latest?`<button class="recent-object" data-action="continue" data-id="${latest.id}">${V.icon(latest.app)}<span><small>Last creation</small><strong>${E(latest.title)}</strong></span></button>`:""}
     </div>`;
   }
 
-  function welcomeLayout(app, title, copy, body) {
-    return `<div class="workspace-shell">${workspaceHeader(app)}<div class="workspace-body">
-      <section class="welcome-panel"><div><p class="eyebrow">Welcome</p><h2>${title}</h2><p class="lede">${copy}</p>${body}</div></section>
-    </div></div>`;
+  function homePortal(app,title,copy,left,top,width,height){
+    return `<button class="room-portal portal-${app}" style="left:${left};top:${top};width:${width};height:${height}" data-action="enter-app" data-app="${app}"><span class="portal-pulse">${V.icon(app)}</span><span class="portal-label"><strong>${title}</strong><small>${copy}</small></span></button>`;
   }
 
-  function openApp(app, itemId) {
-    view = { name: "app", app };
-    current = itemId ? deepCopy(library.items.find(i => i.id === itemId) || null) : null;
-    if (current) renderCurrent();
-    else renderWelcome(app);
-    window.scrollTo(0, 0);
+  function startDefault(app,id=null){
+    pendingConnection=[];
+    if(id){Core.open(id);route={page:Core.current.app,mode:"edit",drawer:null};render();return;}
+    if(app==="world")Core.create("world","New living world",newWorld("island"));
+    if(app==="mystery")Core.create("mystery",C.mysteries[0].title,newMystery(C.mysteries[0].id));
+    if(app==="evidence")Core.create("evidence",C.evidenceSets[0].title,newEvidence(C.evidenceSets[0].id));
+    if(app==="inventor")Core.create("inventor",C.inventor.briefs[0].title,newInventor(C.inventor.briefs[0]));
+    if(app==="consequence")Core.create("consequence",C.consequences[0].title,newConsequence(C.consequences[0].id));
+    route={page:app,mode:"edit",drawer:null};render();
+    setTimeout(()=>showGesture(app),500);
   }
 
-  function renderWelcome(app) {
-    current = null;
-    if (app === "world") {
-      main.innerHTML = welcomeLayout(app, "Make a place worth wondering about.", "Begin with empty ground, a coherent world seed or one of three fully made examples.", `<div class="welcome-choices">
-        <button class="button" data-action="world-start" data-kind="blank">Blank world</button>
-        <button class="button secondary" data-action="world-start" data-kind="generated">Generate a world seed</button>
-      </div><div class="example-grid">${C.world.examples.map((w,i) => `<button class="choice-card" data-action="world-example" data-index="${i}"><span class="mini-tag">Example world</span><h3>${w.title}</h3><p>${w.problem}</p></button>`).join("")}</div>`);
-    } else if (app === "mystery") {
-      main.innerHTML = welcomeLayout(app, "A map never tells the whole story.", "Choose a case. Visit places in any order, keep only the clues that matter and build a theory before the reveal.", `<div class="scenario-grid">${C.mysteries.map(m => `<button class="choice-card" data-action="mystery-start" data-id="${m.id}"><span class="mini-tag">Complete mystery</span><h3>${m.title}</h3><p>${m.intro}</p></button>`).join("")}</div>`);
-    } else if (app === "evidence") {
-      main.innerHTML = welcomeLayout(app, "Move the evidence. Change your mind.", "Place sources on the board, group and connect them, then make a claim that can survive a difficult question.", `<div class="scenario-grid">${C.evidenceSets.map(s => `<button class="choice-card" data-action="evidence-start" data-id="${s.id}"><span class="mini-tag">${s.subject}</span><h3>${s.title}</h3><p>${s.question}</p></button>`).join("")}</div>`);
-    } else if (app === "inventor") {
-      main.innerHTML = welcomeLayout(app, "Useful ideas begin with a real problem.", "Choose a brief, select materials for their properties, make a labelled design and test its trade-offs.", `<div class="welcome-choices"><button class="button secondary" data-action="inventor-custom">Write a custom brief</button></div><div class="brief-grid">${C.inventor.briefs.map(b => `<button class="choice-card" data-action="inventor-start" data-id="${b.id}"><span class="mini-tag">Design brief</span><h3>${b.title}</h3><p>${b.problem}</p></button>`).join("")}</div>`);
-    } else {
-      main.innerHTML = welcomeLayout(app, "A choice is only the beginning.", "Explore balanced situations where every option helps someone, costs something or creates a result you did not expect.", `<div class="welcome-choices"><button class="button secondary" data-action="consequence-create">Create your own scenario</button></div><div class="scenario-grid">${C.consequences.map(s => `<button class="choice-card" data-action="consequence-start" data-id="${s.id}"><span class="mini-tag">Decision scenario</span><h3>${s.title}</h3><p>${s.setting}</p></button>`).join("")}</div>`);
-    }
+  function newWorld(seed="island"){
+    const tiles=Array.from({length:96},(_,i)=>{
+      const row=Math.floor(i/12),col=i%12;
+      if(seed==="desert")return row>5?"rock":"sand";
+      if(seed==="mountain")return Math.abs(col-6)+Math.abs(row-4)<4?"rock":"meadow";
+      if(seed==="forest")return i%5?"forest":"meadow";
+      if(seed==="archipelago")return ((col*7+row*3)%11<4)?"meadow":"water";
+      if(seed==="valley")return col<3||col>8?"rock":row>5?"water":"meadow";
+      if(seed==="strange")return ["snow","forest","sand","water"][(col+row*2)%4];
+      if(seed==="blank")return"meadow";
+      return row<1||row>6||col<1||col>10?"water":((row+col)%7===0?"forest":"meadow");
+    });
+    return {schema:2,seed,tiles,elevation:Array(96).fill(1),objects:[],people:[],weather:"sun",season:"spring",time:"day",waterLevel:2,tool:"raise",palette:"terrain",selected:null,camera:{x:0,y:0,zoom:1},events:[],discoveries:[],tour:0,caption:""};
   }
 
-  function createItem(app, title, data) {
-    current = { id: uid(app), app, title, createdAt: Date.now(), updatedAt: Date.now(), data };
-    library.items.push(deepCopy(current));
-    persistLibrary();
-    announce("Saved on this device"); tone();
-    return current;
+  function newMystery(id){
+    const m=C.mysteries.find(x=>x.id===id);
+    return {schema:2,mysteryId:id,locationId:m.locations[0].id,visited:[m.locations[0].id],clues:[],clueLinks:[],timeline:[],theories:[],selectedClues:[],tool:"hand",hints:0,replayStep:0,mode:"scene",revealed:false};
   }
 
-  function queueSave(silent = false) {
-    if (!current) return;
-    window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => saveCurrent(silent), 350);
+  function newEvidence(id){
+    const set=C.evidenceSets.find(x=>x.id===id);
+    return {schema:2,setId:id,placed:set.evidence.slice(0,3).map((e,i)=>({id:e.id,x:12+i*23,y:18+i*10,rotation:(i-1)*3,scale:1,group:""})),hidden:[],connections:[],selected:[],tool:"hand",flipped:[],revealed:[],support:[],claim:"",claimToken:{x:43,y:42},creator:null};
   }
 
-  function saveCurrent(silent = true) {
-    if (!current) return;
-    current.updatedAt = Date.now();
-    const index = library.items.findIndex(i => i.id === current.id);
-    if (index >= 0) library.items[index] = deepCopy(current);
-    else library.items.push(deepCopy(current));
-    persistLibrary();
-    if (!silent) { announce("Saved on this device"); tone(); }
+  function newInventor(brief){
+    return {schema:2,brief:Core.copy(brief),parts:[],connections:[],selected:[],tool:"hand",versions:[],testHistory:[],environment:{wind:2,water:1,slope:1,load:2},testMotion:null,camera:{zoom:1}};
   }
 
-  function renderCurrent() {
-    if (!current) return;
-    view = { name: "app", app: current.app };
-    if (current.app === "world") renderWorld();
-    if (current.app === "mystery") renderMystery();
-    if (current.app === "evidence") renderEvidence();
-    if (current.app === "inventor") renderInventor();
-    if (current.app === "consequence") renderConsequence();
+  function newConsequence(id){
+    return {schema:2,scenarioId:id,currentNode:"opening",history:[],savedPaths:[],resources:[{id:Core.uid("token"),type:"resource",x:12,y:69},{id:Core.uid("token"),type:"people",x:22,y:75}],sceneState:{nature:3,people:3,access:3,resources:3,time:0},complete:false,ending:"",comparePath:null,creator:null};
   }
 
-  function steps(items, active) {
-    const activeIndex = items.findIndex(i => i.id === active);
-    return `<nav class="stepper" aria-label="Activity steps">${items.map((s,i) => `<button class="step ${i === activeIndex ? "current" : ""} ${i < activeIndex ? "done" : ""}" data-action="set-stage" data-stage="${s.id}" ${i > activeIndex ? "disabled" : ""}><span>${i < activeIndex ? "✓" : i+1}</span>${s.label}</button>`).join("")}</nav>`;
+  function showGesture(app){
+    if(localStorage.getItem(`workshop-seen-${app}`))return;
+    localStorage.setItem(`workshop-seen-${app}`,"1");
+    const messages={world:"Drag a tool across the land",mystery:"Open the glowing object",evidence:"Move two pieces together",inventor:"Place a part on the bench",consequence:"Move a token to a choice"};
+    const target=document.querySelector(".gesture-target,.world-tile,.scene-hotspot,.evidence-piece,.part-choice,.decision-token");
+    target?.classList.add("gesture-demo");Core.announce(messages[app]);setTimeout(()=>target?.classList.remove("gesture-demo"),2600);
   }
 
-  function field(label, name, value, kind = "input", hint = "") {
-    const control = kind === "textarea"
-      ? `<textarea data-field="${name}">${escapeHTML(value || "")}</textarea>`
-      : `<input data-field="${name}" value="${escapeHTML(value || "")}">`;
-    return `<label class="field"><span>${label}</span>${control}${hint ? `<small class="field-hint">${hint}</small>` : ""}</label>`;
+  function renderWorld(){
+    const item=Core.current;if(!item)return renderHome();const d=item.data;
+    if(route.mode==="present")return renderWorldTour();
+    const reactions=worldReactions(d), selected=[...d.objects,...d.people].find(o=>o.id===d.selected);
+    const cells=d.tiles.map((tile,i)=>`<button class="world-tile tile-${tile} level-${d.elevation?.[i]||1}" data-action="world-paint" data-index="${i}" aria-label="${tile} land, level ${d.elevation?.[i]||1}"><span>${terrainGlyph(tile)}</span></button>`).join("");
+    const objects=d.objects.map(o=>`<button class="world-place ${o.id===d.selected?"selected":""} reaction-${reactions[o.id]?.state||"calm"}" style="left:${o.x}%;top:${o.y}%" data-move="${o.id}" data-move-kind="world-object" data-action="world-select" data-id="${o.id}" aria-label="${E(o.name||worldObject(o.type).name)}. Drag to move.">${V.miniWorld(o.type,reactions[o.id]?.state)}<span>${E(o.name||worldObject(o.type).name)}</span>${reactions[o.id]?.need?`<i class="need-bubble">${reactions[o.id].need}</i>`:""}</button>`).join("");
+    const people=d.people.map(p=>`<button class="world-person ${p.id===d.selected?"selected":""}" style="left:${p.x}%;top:${p.y}%" data-move="${p.id}" data-move-kind="world-person" data-action="world-select" data-id="${p.id}" aria-label="${E(p.name)}. Drag to move.">${V.person(p.type,p.need)}<span>${E(p.name)}</span></button>`).join("");
+    const event=d.events.at(-1);
+    const scene=`<div class="world-stage weather-${d.weather} time-${d.time} season-${d.season}" data-camera-board data-move-board>
+      <div class="world-sky"><span class="sun-moon"></span><i class="cloud cloud-a"></i><i class="cloud cloud-b"></i><div class="weather-layer"></div></div>
+      <div class="world-grid" style="--world-zoom:${d.camera?.zoom||1}">${cells}</div>${objects}${people}
+      ${event&&!event.resolved?worldEventCard(event):""}
+      ${d.discoveries.length?`<div class="discovery-ribbon">✦ ${E(d.discoveries.at(-1))}</div>`:""}
+      <div class="scene-invitation"><strong>Shape your world</strong><span>${worldSummary(d)}</span></div>
+      <div class="camera-tools">${button("zoom-out","Zoom out","zoomOut")}${button("zoom-in","Zoom in","zoomIn")}${button("fit-view","Fit world","fit")}</div>
+    </div>`;
+    const tray=`<div class="tray-tabs">${trayTab("terrain","Land",d.palette)}${trayTab("places","Places",d.palette)}${trayTab("people","People",d.palette)}${trayTab("weather","Weather",d.palette)}</div>${worldTray(d)}`;
+    const context=selected?worldContext(selected,d,reactions):`<button class="round-action" data-action="world-event">${V.icon("play")}<span>New event</span></button><button class="round-action" data-action="present">${V.icon("map")}<span>World tour</span></button><button class="round-action" data-action="switch-content">${V.icon("folder")}<span>World seeds</span></button>`;
+    main.innerHTML=workspace("world",scene,tray,context);
   }
 
-  function worldBlank() {
-    return { stage: "build", terrain: "forest", climate: "", scale: "", inhabitants: "", creatures: "", resources: "", dangers: "", rules: "", customs: "", secret: "", problem: "", promptNotes: [], currentPrompt: C.world.prompts[0], locations: [], links: [], selectedLocation: null };
+  function terrainGlyph(tile){return B.terrains.find(t=>t.id===tile)?.glyph||"·";}
+  function worldObject(type){return B.worldObjects.find(x=>x.id===type)||B.worldObjects[0];}
+  function trayTab(id,label,active){return `<button class="tray-tab ${id===active?"active":""}" data-action="world-palette" data-id="${id}">${label}</button>`;}
+
+  function worldTray(d){
+    if(d.palette==="terrain")return `<div class="tool-row">${["raise","lower"].map(t=>`<button class="object-tool ${d.tool===t?"active":""}" data-action="world-tool" data-id="${t}">${V.icon(t==="raise"?"zoomIn":"zoomOut")}<span>${t}</span></button>`).join("")}${B.terrains.map(t=>`<button class="swatch-tool ${d.tool===t.id?"active":""}" style="--swatch:${t.colour}" data-action="world-tool" data-id="${t.id}"><i>${t.glyph}</i><span>${t.name}</span></button>`).join("")}</div>`;
+    if(d.palette==="places")return `<div class="tool-row">${B.worldObjects.map(o=>`<button class="object-tool" data-action="world-add-object" data-id="${o.id}">${V.miniWorld(o.id)}<span>${o.name}</span></button>`).join("")}</div>`;
+    if(d.palette==="people")return `<div class="tool-row">${B.inhabitants.map(p=>`<button class="object-tool" data-action="world-add-person" data-id="${p.id}">${V.person(p.id,p.need)}<span>${p.name}</span></button>`).join("")}</div>`;
+    return `<div class="tool-row">${B.weather.map(w=>`<button class="weather-tool ${d.weather===w||d.time===w?"active":""}" data-action="world-weather" data-id="${w}"><i class="weather-icon wi-${w}"></i><span>${w}</span></button>`).join("")}<label class="water-slider"><span>Water</span><input type="range" min="0" max="4" value="${d.waterLevel}" data-action="world-water"></label></div>`;
   }
 
-  function generatedWorld() {
-    const g = C.world.generator;
-    const pick = arr => arr[Math.floor(Math.random() * arr.length)];
-    const name = `${pick(["Whisper", "Moss", "Copper", "Silver", "Wandering", "Quiet", "Rain"])} ${pick(["Reach", "Hollow", "Harbour", "Vale", "Crossing", "Circle"] )}`;
-    const terrain = pick(g.terrains);
-    const locations = g.locationNames.slice().sort(() => Math.random() - .5).slice(0, 3).map((n,i) => ({ id: uid("loc"), name: n, symbol: ["home","tree","gate"][i], x: [17,60,39][i], y: [28,25,67][i], notes: "" }));
-    return { ...worldBlank(), title: name, terrain, climate: pick(g.climates), scale: pick(g.scales), inhabitants: pick(g.inhabitants), creatures: pick(g.creatures), resources: pick(g.resources), dangers: pick(g.dangers), rules: pick(g.rules), customs: pick(g.customs), secret: pick(g.secrets), problem: pick(g.problems), locations, links: [[locations[0].id, locations[2].id],[locations[1].id, locations[2].id]] };
+  function worldContext(selected,d,reactions){
+    const isPerson=d.people.some(p=>p.id===selected.id);const reaction=reactions[selected.id];
+    return `<div class="context-card"><button class="context-close" data-action="world-deselect">${V.icon("close")}</button>${isPerson?V.person(selected.type,selected.need):V.miniWorld(selected.type)}<strong>${E(selected.name)}</strong><span>${E(reaction?.message || (selected.need?`Needs ${selected.need}`:"Ready to explore"))}</span><div class="context-actions">${button("world-name","Name","question",`data-id="${selected.id}"`)}${button("world-duplicate","Copy","duplicate",`data-id="${selected.id}"`)}${button("world-delete","Remove","delete",`data-id="${selected.id}"`)}</div></div>`;
   }
 
-  function startWorld(kind, exampleIndex) {
-    let data;
-    if (kind === "example") data = { ...deepCopy(C.world.examples[exampleIndex]), stage: "build", currentPrompt: C.world.prompts[0], selectedLocation: null };
-    else data = kind === "generated" ? generatedWorld() : { ...worldBlank(), title: "Untitled world" };
-    createItem("world", data.title, data);
-    renderWorld();
-  }
-
-  function renderWorld() {
-    const d = current.data;
-    if (d.stage === "review") return renderReview("world");
-    const selected = d.locations.find(l => l.id === d.selectedLocation);
-    main.innerHTML = `<div class="workspace-shell">${workspaceHeader("world", current.title)}<div class="workspace-body">
-      ${steps([{id:"build",label:"Shape the world"},{id:"review",label:"World profile"}], d.stage)}
-      <div class="panel-grid wide-side">
-        <aside class="panel stack">
-          <div class="panel-header"><div><p class="eyebrow">World notes</p><h2>What is this place?</h2></div></div>
-          ${field("World name", "title", current.title)}
-          <label class="field"><span>Terrain</span><select data-field="terrain">
-            ${[["forest","Forest and roots"],["islands","Islands and water"],["desert","Dry land and stone"],["night","Night landscape"]].map(([v,l]) => `<option value="${v}" ${d.terrain === v ? "selected" : ""}>${l}</option>`).join("")}
-          </select></label>
-          ${field("Climate", "climate", d.climate)}
-          ${field("Scale", "scale", d.scale)}
-          ${field("Inhabitants", "inhabitants", d.inhabitants, "textarea")}
-          ${field("Creatures", "creatures", d.creatures, "textarea")}
-          ${field("Resources", "resources", d.resources, "textarea")}
-          ${field("Dangers", "dangers", d.dangers, "textarea")}
-          ${field("Important rule", "rules", d.rules, "textarea")}
-          ${field("Custom", "customs", d.customs, "textarea")}
-          ${field("Secret", "secret", d.secret, "textarea")}
-          ${field("Current problem", "problem", d.problem, "textarea")}
-        </aside>
-        <section class="stack">
-          <div class="canvas-panel">
-            <div class="panel-header"><div><p class="eyebrow">World board</p><h2>Place the important locations</h2></div><button class="button small-button" data-action="world-add">${icon("plus")} Add place</button></div>
-            <div class="map-board terrain-${escapeHTML(d.terrain)}" data-board="world" aria-label="World map. Drag locations to move them.">
-              ${worldLinks(d)}
-              ${d.locations.length ? d.locations.map(l => `<button class="board-node ${l.id === d.selectedLocation ? "selected" : ""}" style="left:${l.x}%;top:${l.y}%" data-drag-type="world" data-id="${l.id}" data-action="world-select" aria-label="${escapeHTML(l.name)}. Drag to move."><span class="node-symbol">${nodeIcon(l.symbol)}</span><span class="node-name">${escapeHTML(l.name)}</span></button>`).join("") : `<div class="board-empty"><p>Add the first important place to begin the map.</p></div>`}
-            </div>
-          </div>
-          ${selected ? `<div class="panel stack"><div class="panel-header"><h2>Selected place</h2><button class="button danger small-button" data-action="world-delete-location">${icon("trash")} Remove</button></div>
-            ${field("Place name", "selected.name", selected.name)}
-            <label class="field"><span>Symbol</span><select data-field="selected.symbol">${["home","tree","water","tower","gate","harbour","gear","flag","star"].map(v => `<option ${selected.symbol === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-            ${field("Notes", "selected.notes", selected.notes, "textarea", "What happens here? Who uses it? What might be found?")}
-            <label class="field"><span>Connect this place to</span><select id="world-link-target"><option value="">Choose another place</option>${d.locations.filter(l => l.id !== selected.id).map(l => `<option value="${l.id}">${escapeHTML(l.name)}</option>`).join("")}</select></label>
-            <button class="button secondary" data-action="world-link">${icon("link")} Add connection</button>
-          </div>` : ""}
-          <div class="prompt-card"><p>${escapeHTML(d.currentPrompt)}</p><div class="row wrap"><button class="button small-button" data-action="world-keep-prompt">Keep this question</button><button class="button secondary small-button" data-action="world-shuffle-prompt">${icon("shuffle")} Another</button><button class="text-button" data-action="world-dismiss-prompt">Dismiss</button></div></div>
-          ${d.promptNotes.length ? `<div class="panel"><h3>Questions kept for later</h3><ul>${d.promptNotes.map((p,i) => `<li>${escapeHTML(p)} <button class="text-button" data-action="world-remove-prompt" data-index="${i}">remove</button></li>`).join("")}</ul></div>` : ""}
-        </section>
-      </div>
-    </div></div>`;
-  }
-
-  function worldLinks(d) {
-    const lines = d.links.map(([a,b]) => {
-      const p1 = d.locations.find(l => l.id === a), p2 = d.locations.find(l => l.id === b);
-      if (!p1 || !p2) return "";
-      return `<line x1="${p1.x + 5}" y1="${p1.y + 7}" x2="${p2.x + 5}" y2="${p2.y + 7}"/>`;
-    }).join("");
-    return `<svg class="board-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lines}</svg>`;
-  }
-
-  function startMystery(id) {
-    const m = C.mysteries.find(x => x.id === id);
-    createItem("mystery", m.title, { stage: "investigate", mysteryId: id, visited: [], selectedLocation: m.locations[0].id, clues: [], clueLinks: [], notes: "", theory: { text: "", evidenceIds: [], hard: "", alternative: "", next: "" }, revealed: false });
-    renderMystery();
-  }
-
-  function mysteryData() { return C.mysteries.find(m => m.id === current.data.mysteryId); }
-
-  function renderMystery() {
-    const d = current.data, m = mysteryData();
-    d.clueLinks ||= [];
-    if (d.stage === "review") return renderReview("mystery");
-    if (d.stage === "theory") return renderMysteryTheory();
-    const loc = m.locations.find(l => l.id === d.selectedLocation) || m.locations[0];
-    main.innerHTML = `<div class="workspace-shell">${workspaceHeader("mystery", m.question)}<div class="workspace-body">
-      ${steps([{id:"investigate",label:"Explore"},{id:"theory",label:"Build a theory"},{id:"review",label:"Case record"}], d.stage)}
-      <div class="mystery-layout">
-        <aside class="panel"><p class="eyebrow">Case file</p><h2>${m.title}</h2><p>${m.intro}</p><p><strong>Central question</strong><br>${m.question}</p>
-          <label class="field"><span>Investigator notes</span><textarea data-field="notes" placeholder="Notice patterns, questions and possible explanations…">${escapeHTML(d.notes)}</textarea></label>
-        </aside>
-        <section class="stack">
-          <div class="mystery-map" aria-label="Mystery locations">
-            <svg class="map-paths" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d="M16 18C30 30 34 38 48 46S65 54 78 67M20 63C35 60 48 46 72 20"/></svg>
-            ${m.locations.map(l => `<button class="map-location ${d.visited.includes(l.id) ? "visited" : ""} ${loc.id === l.id ? "active" : ""}" style="left:${l.x}%;top:${l.y}%" data-action="mystery-location" data-id="${l.id}">${icon("mapPin")}<strong>${escapeHTML(l.name)}</strong></button>`).join("")}
-          </div>
-          <article class="scene-card"><div class="scene-illustration">${sceneArt(m.id, loc.id)}</div><p class="eyebrow">${loc.name}</p><h2>Look closely</h2><p>${loc.scene}</p><blockquote>${loc.character}</blockquote>
-            <div class="clue-list">${loc.clues.map(clue => {
-              const collected = d.clues.find(c => c.id === clue.id);
-              return `<div class="clue-card"><strong>${clue.title}</strong><p>${clue.text}</p>${collected ? `<span class="status-pill">Collected · ${collected.status}</span>` : `<button class="button small-button" data-action="collect-clue" data-id="${clue.id}">Collect clue</button>`}</div>`;
-            }).join("")}</div>
-          </article>
-        </section>
-        <aside class="panel"><div class="panel-header"><div><p class="eyebrow">Clue tray</p><h2>${d.clues.length} collected</h2></div></div>
-          <div class="clue-list">${d.clues.length ? d.clues.map(c => {
-            const clue = findMysteryClue(m, c.id);
-            const linked=d.clueLinks.find(pair=>pair.includes(c.id));
-            return `<div class="clue-card"><strong>${clue.title}</strong><p>${clue.text}</p><label class="field"><span>My judgement</span><select data-clue-status="${c.id}">${["important","uncertain","connected","possibly misleading"].map(s => `<option ${c.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label><label class="field"><span>Connect with</span><select data-clue-link="${c.id}"><option value="">No connection</option>${d.clues.filter(other=>other.id!==c.id).map(other=>{const otherClue=findMysteryClue(m,other.id);return`<option value="${other.id}" ${linked?.includes(other.id)?"selected":""}>${escapeHTML(otherClue.title)}</option>`}).join("")}</select></label></div>`;
-          }).join("") : `<p class="empty-copy">Collected clues will stay here while you move around the map.</p>`}</div>
-          <button class="button" data-action="set-stage" data-stage="theory" ${d.clues.length < 2 ? "disabled" : ""}>Build my theory ${icon("arrow")}</button>
-        </aside>
-      </div>
-    </div></div>`;
-  }
-
-  function sceneArt(mystery, location) {
-    const seed = (mystery + location).split("").reduce((n,c) => n + c.charCodeAt(0), 0);
-    const x = 30 + (seed % 45);
-    return `<svg viewBox="0 0 320 190" aria-hidden="true"><path d="M20 164h280M42 164V76l65-35 64 35v88M171 164v-63l53-30 54 30v63"/><path d="M65 164v-53h37v53M118 96h28v31h-28M195 164v-40h34v40M244 113h19v26h-19"/><path d="M${x} 42c18 4 25 17 29 32M${x+29} 74c13-9 29-8 42 1"/><circle cx="270" cy="43" r="15"/></svg>`;
-  }
-
-  function findMysteryClue(m, id) {
-    for (const l of m.locations) { const c = l.clues.find(x => x.id === id); if (c) return c; }
-    return { id, title: "Clue", text: "" };
-  }
-
-  function renderMysteryTheory() {
-    const d = current.data, m = mysteryData();
-    main.innerHTML = `<div class="workspace-shell">${workspaceHeader("mystery", m.question)}<div class="workspace-body">
-      ${steps([{id:"investigate",label:"Explore"},{id:"theory",label:"Build a theory"},{id:"review",label:"Case record"}], d.stage)}
-      <div class="panel-grid wide-side"><aside class="panel"><p class="eyebrow">Your clue tray</p><h2>Choose supporting clues</h2><div class="clue-list">${d.clues.map(c => { const clue=findMysteryClue(m,c.id); return `<label class="clue-card row"><input type="checkbox" data-theory-clue="${c.id}" ${d.theory.evidenceIds.includes(c.id)?"checked":""}><span><strong>${clue.title}</strong><small>${clue.text}</small></span></label>`; }).join("")}</div><button class="button secondary" data-action="set-stage" data-stage="investigate">Return to map</button></aside>
-      <section class="panel stack"><p class="eyebrow">Theory builder</p><h2>${m.question}</h2>
-        ${field("What do you think happened?", "theory.text", d.theory.text, "textarea")}
-        ${field("Which clue is hardest to explain?", "theory.hard", d.theory.hard, "textarea")}
-        ${field("Is there another possible explanation?", "theory.alternative", d.theory.alternative, "textarea")}
-        ${field("What would you investigate next?", "theory.next", d.theory.next, "textarea")}
-        <div class="prompt-card"><p>A strong theory explains several clues and notices what still does not fit.</p></div>
-        <button class="button" data-action="mystery-reveal" ${!d.theory.text.trim() || !d.theory.evidenceIds.length ? "disabled" : ""}>Reveal the resolution</button>
-      </section></div>
-    </div></div>`;
-  }
-
-  function startEvidence(id) {
-    const set = C.evidenceSets.find(s => s.id === id);
-    createItem("evidence", set.title, { stage: "board", setId: id, placed: [], hidden: [], selected: null, connections: [], claim: "", support: [], contradiction: "", uncertainty: "", nextQuestion: "", notes: [] });
-    renderEvidence();
-  }
-
-  function evidenceSet() { return C.evidenceSets.find(s => s.id === current.data.setId); }
-
-  function evidenceLinks(d) {
-    return `<svg class="board-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${d.connections.map(c => {
-      const a=d.placed.find(p=>p.id===c.a), b=d.placed.find(p=>p.id===c.b); if(!a||!b)return"";
-      const mx=(a.x+b.x)/2+8,my=(a.y+b.y)/2+6;
-      return `<line x1="${a.x+8}" y1="${a.y+7}" x2="${b.x+8}" y2="${b.y+7}"/><text class="connection-label" x="${mx}" y="${my}">${escapeHTML(c.label)}</text>`;
-    }).join("")}</svg>`;
-  }
-
-  function renderEvidence() {
-    const d=current.data,set=evidenceSet();
-    if(d.stage==="review") return renderReview("evidence");
-    if(d.stage==="claim") return renderEvidenceClaim();
-    const available=set.evidence.filter(e=>!d.placed.some(p=>p.id===e.id)&&!d.hidden.includes(e.id));
-    const selected=d.placed.find(p=>p.id===d.selected);
-    main.innerHTML=`<div class="workspace-shell">${workspaceHeader("evidence",set.question)}<div class="workspace-body">
-      ${steps([{id:"board",label:"Arrange evidence"},{id:"claim",label:"Build a claim"},{id:"review",label:"Explanation"}],d.stage)}
-      <div class="evidence-layout">
-        <aside class="panel"><p class="eyebrow">Evidence tray</p><h2>${set.title}</h2><p>${set.context}</p><p><strong>${set.question}</strong></p><p class="muted small">This is a fictional classroom case using evidence types found in real investigations.</p>
-          <div class="evidence-tray">${available.map(e=>`<button class="list-card" data-action="evidence-add" data-id="${e.id}">${evidenceVisual(e)}<span class="evidence-type">${e.type}</span><strong>${e.title}</strong><small>${e.text}</small></button>`).join("")||`<p class="muted small">All visible evidence is on the board.</p>`}</div>
-          ${d.hidden.length?`<button class="button secondary small-button" data-action="evidence-restore">Reopen ${d.hidden.length} hidden</button>`:""}
-        </aside>
-        <section class="canvas-panel"><div class="panel-header"><div><p class="eyebrow">Reasoning board</p><h2>Move, group and connect</h2></div><button class="button small-button" data-action="evidence-note">${icon("plus")} Sticky note</button></div>
-          <div class="evidence-board" data-board="evidence" aria-label="Evidence board. Drag evidence cards to arrange them.">${evidenceLinks(d)}
-            ${d.placed.map(p=>{const e=set.evidence.find(x=>x.id===p.id)||d.notes.find(x=>x.id===p.id);return e?`<button class="evidence-card ${d.selected===p.id?"selected":""}" data-group="${p.group||""}" style="left:${p.x}%;top:${p.y}%" data-id="${p.id}" data-drag-type="evidence" data-action="evidence-select"><span class="evidence-type">${e.type||"note"}</span><h4>${escapeHTML(e.title)}</h4><p>${escapeHTML(e.text)}</p></button>`:""}).join("")}
-            ${!d.placed.length?`<div class="board-empty"><p>Choose evidence from the tray, then place related items near each other.</p></div>`:""}
-          </div>
-        </section>
-        <aside class="panel stack"><p class="eyebrow">Board tools</p><h2>${selected?"Selected evidence":"Select a card"}</h2>
-          ${selected?`<div class="chip-list">${["blue","sage","clay","gold"].map(g=>`<button class="chip ${selected.group===g?"active":""}" data-action="evidence-group" data-group="${g}">${g}</button>`).join("")}</div>
-            <label class="field"><span>Connect to</span><select id="evidence-link-target"><option value="">Choose evidence</option>${d.placed.filter(p=>p.id!==selected.id).map(p=>{const e=set.evidence.find(x=>x.id===p.id)||d.notes.find(x=>x.id===p.id);return`<option value="${p.id}">${escapeHTML(e?.title||"Note")}</option>`}).join("")}</select></label>
-            <label class="field"><span>Relationship</span><select id="evidence-link-label">${["supports","contradicts","caused","happened before","may explain","raises a question","probably unrelated"].map(x=>`<option>${x}</option>`).join("")}</select></label>
-            <button class="button secondary" data-action="evidence-link">${icon("link")} Connect</button>
-            <button class="button danger small-button" data-action="evidence-hide">Hide from board</button>`:`<p class="empty-copy">Select a card to colour-code it, connect it or hide it.</p>`}
-          <div class="prompt-card"><p>Observation: what the source directly shows. Inference: what you think it may mean.</p></div>
-          <button class="button" data-action="set-stage" data-stage="claim" ${d.placed.length<2?"disabled":""}>Build a claim ${icon("arrow")}</button>
-        </aside>
-      </div>
-    </div></div>`;
-  }
-
-  function renderEvidenceClaim() {
-    const d=current.data,set=evidenceSet();
-    const unused=d.placed.filter(p=>!d.support.includes(p.id)&&!d.notes.some(n=>n.id===p.id));
-    main.innerHTML=`<div class="workspace-shell">${workspaceHeader("evidence",set.question)}<div class="workspace-body">
-      ${steps([{id:"board",label:"Arrange evidence"},{id:"claim",label:"Build a claim"},{id:"review",label:"Explanation"}],d.stage)}
-      <div class="panel-grid wide-side"><aside class="panel"><p class="eyebrow">Evidence on your board</p><h2>Attach support</h2><div class="clue-list">${d.placed.map(p=>{const e=set.evidence.find(x=>x.id===p.id)||d.notes.find(x=>x.id===p.id);return e?`<label class="clue-card row"><input type="checkbox" data-support-evidence="${p.id}" ${d.support.includes(p.id)?"checked":""}><span><strong>${escapeHTML(e.title)}</strong><small>${escapeHTML(e.text)}</small></span></label>`:""}).join("")}</div><button class="button secondary" data-action="set-stage" data-stage="board">Return to board</button></aside>
-        <section class="panel stack"><p class="eyebrow">Theory panel</p><h2>${set.question}</h2>
-          ${field("My main claim", "claim", d.claim, "textarea", "Say what you think explains the evidence.")}
-          ${field("Conflicting evidence I must address", "contradiction", d.contradiction, "textarea")}
-          ${field("What remains uncertain?", "uncertainty", d.uncertainty, "textarea")}
-          ${field("What should be investigated next?", "nextQuestion", d.nextQuestion, "textarea")}
-          <div class="panel"><h3>Reasoning check</h3><ul>
-            <li>${d.support.length>=2?"Your claim has several pieces of support.":"Attach at least two pieces of evidence to strengthen the claim."}</li>
-            <li>${unused.length?`${unused.length} board item${unused.length===1?" is":"s are"} not yet used. That can be sensible, but check them.`:"You have considered every board item."}</li>
-            <li>${d.contradiction.trim()?"You have noticed evidence that may not fit.":"No contradiction is addressed yet."}</li>
-            <li>${d.nextQuestion.trim()?"You have named a useful next question.":"Add one question that the evidence cannot yet answer."}</li>
-          </ul></div>
-          <button class="button" data-action="review" ${!d.claim.trim()||d.support.length<1?"disabled":""}>Create explanation view</button>
-        </section>
-      </div>
-    </div></div>`;
-  }
-
-  function startInventor(id, custom) {
-    const brief=custom||C.inventor.briefs.find(b=>b.id===id);
-    createItem("inventor", brief.title, { stage:"design", brief:deepCopy(brief), parts:[], selected:null, connections:[], tests:null, iterations:[], strength:"", weakness:"", changeReason:"" });
-    renderInventor();
-  }
-
-  function designLinks(d) {
-    return `<svg class="board-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="design-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7Z" fill="rgba(48,59,100,.55)"/></marker></defs>${d.connections.map(c=>{const a=d.parts.find(p=>p.id===c.a),b=d.parts.find(p=>p.id===c.b);return a&&b?`<line marker-end="url(#design-arrow)" x1="${a.x+5}" y1="${a.y+5}" x2="${b.x+5}" y2="${b.y+5}"/>`:""}).join("")}</svg>`;
-  }
-
-  function renderInventor() {
-    const d=current.data;
-    if(d.stage==="review") return renderReview("inventor");
-    if(d.stage==="test") return renderInventorTest();
-    const selected=d.parts.find(p=>p.id===d.selected);
-    main.innerHTML=`<div class="workspace-shell">${workspaceHeader("inventor",d.brief.problem)}<div class="workspace-body">
-      ${steps([{id:"design",label:"Build a design"},{id:"test",label:"Test and improve"},{id:"review",label:"Design sheet"}],d.stage)}
-      <div class="design-layout"><aside class="panel"><p class="eyebrow">Parts and materials</p><h2>Choose for a reason</h2><div class="parts-tray">${C.inventor.materials.map(m=>`<button class="part-button" data-action="inventor-add" data-id="${m.id}"><strong>${m.name}</strong><small>${m.properties.slice(0,2).join(" · ")}</small></button>`).join("")}</div></aside>
-        <section class="canvas-panel"><div class="panel-header"><div><p class="eyebrow">Design brief</p><h2>${escapeHTML(d.brief.title)}</h2><p>${escapeHTML(d.brief.problem)} <strong>${escapeHTML(d.brief.limits||"")}</strong></p></div></div>
-          <div class="design-board" data-board="inventor" aria-label="Design board. Drag parts to move them.">${designLinks(d)}${d.parts.map(p=>{const m=C.inventor.materials.find(x=>x.id===p.material);return`<button class="design-part ${p.id===d.selected?"selected":""}" data-id="${p.id}" data-drag-type="inventor" data-action="inventor-select" style="left:${p.x}%;top:${p.y}%;width:${p.w}px;height:${p.h}px;transform:rotate(${p.rotation}deg)"><span class="part-name">${escapeHTML(p.label||m.name)}</span></button>`}).join("")}${!d.parts.length?`<div class="board-empty"><p>Select materials from the bench. Place only what your idea needs.</p></div>`:""}</div>
-        </section>
-        <aside class="panel stack"><p class="eyebrow">Design tools</p><h2>${selected?"Selected part":"Your design"}</h2>
-          ${selected?`${field("Label", "part.label", selected.label)}${field("What is its job?", "part.job", selected.job, "textarea")}${field("Movement note", "part.movement", selected.movement||"", "textarea", "For example: turns, pulls, slides or stays still")}
-            <label class="field"><span>Size</span><input type="range" min="70" max="180" value="${selected.w}" data-field="part.size"></label>
-            <div class="row wrap"><button class="button secondary small-button" data-action="inventor-rotate">Rotate 15°</button><button class="button danger small-button" data-action="inventor-remove">Remove</button></div>
-            <label class="field"><span>Connect to</span><select id="inventor-link-target"><option value="">Choose a part</option>${d.parts.filter(p=>p.id!==selected.id).map(p=>`<option value="${p.id}">${escapeHTML(p.label||C.inventor.materials.find(m=>m.id===p.material).name)}</option>`).join("")}</select></label><button class="button secondary" data-action="inventor-link">${icon("link")} Connect parts</button>`:`<p class="empty-copy">Select a part to label, resize, rotate or connect it.</p>`}
-          <div class="prompt-card"><p>A useful label explains what a part does, not only what it is.</p></div>
-          <button class="button" data-action="set-stage" data-stage="test" ${d.parts.length<2?"disabled":""}>Test the design ${icon("test")}</button>
-        </aside>
-      </div>
-    </div></div>`;
-  }
-
-  function testDesign() {
-    const d=current.data, priorities=d.brief.priorities||["strength","stability","ease"];
+  function worldReactions(d){
     const result={};
-    for(const p of priorities){
-      const values=d.parts.map(part=>C.inventor.materials.find(m=>m.id===part.material)?.scores[p]??2);
-      result[p]=values.length?Math.round(values.reduce((a,b)=>a+b,0)/values.length*20):0;
-    }
-    if(priorities.includes("parts")) result.parts=Math.max(20,100-d.parts.length*9);
-    const mats=d.parts.map(p=>C.inventor.materials.find(m=>m.id===p.material));
-    const messages=[];
-    if(d.parts.length>7) messages.push("It may work, but many parts create more joins that could fail.");
-    if(mats.some(m=>m.id==="weight")&&priorities.includes("light")) messages.push("Extra weight may improve stability but makes the design harder to carry.");
-    if(mats.some(m=>m.id==="plastic")&&mats.some(m=>m.id==="fabric")) messages.push("Flexible coverings are light, but the joins need careful planning.");
-    if(mats.some(m=>m.id==="wheel")&&!mats.some(m=>m.id==="axle")) messages.push("Wheels usually need an axle or another clear way to turn.");
-    if(mats.some(m=>m.id==="pulley")&&!mats.some(m=>m.id==="string")) messages.push("A pulley needs a flexible line to transfer the pull.");
-    if(!messages.length) messages.push("The parts form a simple system. Look closely at its weakest join and how a person would control it.");
-    d.tests={scores:result,messages,number:(d.tests?.number||0)+1,date:Date.now()};
-    queueSave();
+    d.objects.forEach(o=>{
+      const tile=tileAt(d,o.x,o.y),near=d.objects.filter(x=>x.id!==o.id&&distance(x,o)<24);
+      let state="calm",need="",message=worldObject(o.type).reaction;
+      if(o.type==="village"&&tile!=="water"&&!near.some(n=>tileAt(d,n.x,n.y)==="water")){state="need";need="≈";message="Needs nearby water";}
+      if(o.type==="farm"&&!['meadow','path'].includes(tile)){state="need";need="✦";message="Needs open land";}
+      if(o.type==="bridge"&&tile!=="water"){state="need";need="≈";message="Place across water";}
+      if(o.type==="windmill"&&d.weather==="wind")state="active";
+      if(o.type==="lighthouse"&&d.time==="night")state="active";
+      if(o.type==="market"&&near.some(n=>n.type==="village"))state="active";
+      result[o.id]={state,need,message};
+    });
+    d.people.forEach(p=>{const near=d.objects.find(o=>distance(o,p)<22);result[p.id]={state:near?"active":"need",need:near?"":"→",message:near?`Visiting ${near.name||worldObject(near.type).name}`:"Needs a place to visit"};});
+    return result;
   }
 
-  function renderInventorTest() {
-    const d=current.data;
-    main.innerHTML=`<div class="workspace-shell">${workspaceHeader("inventor",d.brief.problem)}<div class="workspace-body">
-      ${steps([{id:"design",label:"Build a design"},{id:"test",label:"Test and improve"},{id:"review",label:"Design sheet"}],d.stage)}
-      <div class="panel-grid wide-side"><aside class="panel"><p class="eyebrow">Simplified test</p><h2>${escapeHTML(d.brief.title)}</h2><p>This is a reasoning model, not a real scientific simulation. A physical prototype may behave differently.</p><p><strong>Priorities</strong></p><div class="chip-list">${(d.brief.priorities||[]).map(p=>`<span class="tag">${p}</span>`).join("")}</div><button class="button" data-action="inventor-run-test">${icon("test")} ${d.tests?"Test again":"Run first test"}</button><button class="button secondary" data-action="set-stage" data-stage="design">Return to design</button></aside>
-        <section class="panel stack"><p class="eyebrow">Test results</p><h2>${d.tests?`Iteration test ${d.tests.number}`:"Ready to test"}</h2>
-          ${d.tests?`<div class="stack">${Object.entries(d.tests.scores).map(([k,v])=>`<div class="test-meter"><strong>${k}</strong><div class="meter-track"><div class="meter-fill" style="width:${v}%"></div></div><span>${ratingWord(v)}</span></div>`).join("")}</div><div class="prompt-card"><ul>${d.tests.messages.map(m=>`<li>${escapeHTML(m)}</li>`).join("")}</ul></div>`:`<p class="empty-copy">The test will use material properties and your brief’s priorities to reveal trade-offs.</p>`}
-          ${field("One strength", "strength", d.strength, "textarea")}${field("One weakness", "weakness", d.weakness, "textarea")}${field("What will you change, and why may it help?", "changeReason", d.changeReason, "textarea")}
-          <div class="row wrap"><button class="button secondary" data-action="inventor-save-iteration" ${!d.tests?"disabled":""}>Save this iteration</button><button class="button" data-action="review" ${!d.tests||!d.strength.trim()||!d.weakness.trim()?"disabled":""}>Create design sheet</button></div>
-          ${d.iterations.length?`<div class="panel"><h3>Saved iterations</h3><ol>${d.iterations.map((it,i)=>`<li><strong>Version ${i+1}</strong> · ${it.parts.length} parts · ${Object.keys(it.tests?.scores||{}).map(k=>`${k}: ${ratingWord(it.tests.scores[k])}`).join(", ")}</li>`).join("")}</ol></div>`:""}
-        </section>
-      </div>
-    </div></div>`;
+  function distance(a,b){return Math.hypot((a.x||0)-(b.x||0),(a.y||0)-(b.y||0));}
+  function tileAt(d,x,y){const col=Core.clamp(Math.floor(x/100*12),0,11),row=Core.clamp(Math.floor(y/100*8),0,7);return d.tiles[row*12+col];}
+  function worldSummary(d){const active=Object.values(worldReactions(d)).filter(r=>r.state==="active").length;return `${d.objects.length} places · ${d.people.length} inhabitants · ${active} active`;
   }
 
-  function ratingWord(value){return value>=80?"strong":value>=60?"promising":value>=40?"mixed":"needs attention";}
-
-  function startConsequence(id, customScenario) {
-    const scenario=customScenario||C.consequences.find(s=>s.id===id);
-    createItem("consequence",scenario.title,{stage:"play",scenarioId:customScenario?null:id,customScenario:customScenario?deepCopy(customScenario):null,currentNode:"opening",history:[],complete:false,reflection:{intend:"",unexpected:"",benefit:"",difficulty:"",same:"",newOption:""}});
-    renderConsequence();
+  function worldEventCard(event){
+    return `<div class="world-event"><i>${V.icon(event.icon||"question")}</i><strong>${E(event.text)}</strong><div>${(event.choices||["Help now","Watch first"]).map((c,i)=>`<button data-action="world-event-choice" data-index="${i}">${E(c)}</button>`).join("")}</div></div>`;
   }
 
-  function scenarioData(){return current.data.customScenario||C.consequences.find(s=>s.id===current.data.scenarioId);}
+  function renderWorldTour(){
+    const d=Core.current.data,stops=[...d.objects,...d.people];const stop=stops[d.tour%Math.max(1,stops.length)];
+    main.innerHTML=`<section class="presentation-scene world-presentation weather-${d.weather} time-${d.time}"><div class="world-grid poster-grid">${d.tiles.map(t=>`<i class="world-tile tile-${t}"></i>`).join("")}</div>${d.objects.map(o=>`<div class="world-place ${o.id===stop?.id?"tour-active":""}" style="left:${o.x}%;top:${o.y}%">${V.miniWorld(o.type)}<span>${E(o.name)}</span></div>`).join("")}<div class="present-caption"><small>World tour</small><h1>${E(Core.current.title)}</h1><p>${E(stop?.name||"A living world")}</p></div><div class="present-controls">${button("tour-prev","Previous","undo")}${button("tour-next","Next","redo")}${button("exit-present","Exit","close")}</div></section>`;
+  }
+
+  function mysteryData(){return C.mysteries.find(m=>m.id===Core.current.data.mysteryId);}
+  function allMysteryClues(m){return m.locations.flatMap((l,li)=>l.clues.map((c,ci)=>({...c,locationId:l.id,location:l.name,hotX:[25,70,43,82][(ci+li)%4],hotY:[68,47,28,70][(ci*2+li)%4]})));}
+
+  function renderMystery(){
+    const d=Core.current.data,m=mysteryData();if(!m)return switchContent("mystery");
+    if(route.mode==="present")return renderMysteryReplay();
+    if(d.mode==="notebook")return renderMysteryNotebook();
+    const li=m.locations.findIndex(l=>l.id===d.locationId),loc=m.locations[li]||m.locations[0],clues=allMysteryClues(m).filter(c=>c.locationId===loc.id);
+    const scene=`<div class="mystery-stage tool-${d.tool}" data-camera-board><div class="mystery-scene-art">${V.mysteryScene(loc,li)}</div>
+      <div class="mystery-message"><span>${E((m.message||m.intro).split(/[.!?]/)[0])}</span><strong>${E(loc.name)}</strong></div>
+      ${clues.map((c,i)=>`<button class="scene-hotspot ${d.clues.some(x=>x.id===c.id)?"found":""} action-${c.action||["magnify","flip","light","listen"][i%4]}" style="left:${c.hotX}%;top:${c.hotY}%" data-action="mystery-inspect" data-id="${c.id}" aria-label="Inspect ${E(c.title)}"><i></i><span>${V.icon(c.action||"magnify")}</span></button>`).join("")}
+      <div class="scene-character"><span class="character-face"></span><button data-action="speak" data-text="${E(loc.character)}">${V.icon("speak")}<b>${E(shortSpeech(loc.character))}</b></button></div>
+      <nav class="location-ribbon" aria-label="Mystery locations">${m.locations.map((l,i)=>`<button class="${l.id===loc.id?"active":""} ${d.visited.includes(l.id)?"visited":""}" data-action="mystery-location" data-id="${l.id}"><i>${i+1}</i><span>${E(l.name)}</span></button>`).join("")}</nav>
+    </div>`;
+    const tray=`<div class="tool-row">${B.tools.mystery.map(t=>`<button class="object-tool ${d.tool===t?"active":""}" data-action="mystery-tool" data-id="${t}">${V.icon(t)}<span>${t}</span></button>`).join("")}<button class="object-tool pouch-button" data-action="mystery-notebook">${V.icon("folder")}<span>Pouch</span><b>${d.clues.length}</b></button></div>`;
+    const context=`<button class="round-action" data-action="mystery-hint">${V.icon("show")}<span>Hint ${Math.min(3,d.hints+1)}</span></button><button class="round-action" data-action="switch-content">${V.icon("map")}<span>Cases</span></button>`;
+    main.innerHTML=workspace("mystery",scene,tray,context);
+  }
+
+  function shortSpeech(text){const clean=text.includes(":")?text.split(":").slice(1).join(":"):text;return clean.replace(/[‘’]/g,"").split(/(?<=[.!?])\s/)[0].slice(0,95);}
+
+  function renderMysteryNotebook(){
+    const d=Core.current.data,m=mysteryData(),all=allMysteryClues(m),found=d.clues.map(x=>all.find(c=>c.id===x.id)).filter(Boolean);
+    const connectionLines=d.clueLinks.map(([a,b])=>{const ai=found.findIndex(c=>c.id===a),bi=found.findIndex(c=>c.id===b);if(ai<0||bi<0)return"";return`<path d="M${85+ai%4*190} ${120+Math.floor(ai/4)*150} Q380 210 ${85+bi%4*190} ${120+Math.floor(bi/4)*150}"/>`;}).join("");
+    main.innerHTML=`<section class="notebook-page"><header><button class="tool-button" data-action="mystery-scene">${V.icon("close")}<span>Close pouch</span></button><div><small>Case notebook</small><h1>${E(m.question)}</h1></div><button class="tool-button" data-action="mystery-theory">${V.icon("connect")}<span>Build theory</span></button></header>
+      <div class="case-board"><svg class="case-strings" viewBox="0 0 800 620">${connectionLines}</svg>${found.map((c,i)=>`<button class="physical-clue ${d.selectedClues.includes(c.id)?"selected":""} clue-${c.kind||"object"}" style="left:${4+(i%4)*24}%;top:${7+Math.floor(i/4)*25}%" data-action="mystery-clue-select" data-id="${c.id}"><span class="clue-visual">${clueMiniArt(c)}</span><strong>${E(c.title)}</strong><small>${E(c.location)}</small></button>`).join("")}${!found.length?`<div class="empty-visual">${V.icon("magnify")}<strong>Find your first clue</strong></div>`:""}</div>
+      <div class="timeline-dock"><span>Earlier</span>${d.timeline.map(id=>{const c=all.find(x=>x.id===id);return`<button>${E(c?.title||"Clue")}</button>`}).join("")}<span>Later</span></div>
+      <div class="notebook-actions"><button data-action="mystery-connect" ${d.selectedClues.length!==2?"disabled":""}>${V.icon("string")} Connect</button><button data-action="mystery-timeline" ${d.selectedClues.length!==1?"disabled":""}>${V.icon("map")} Timeline</button></div>
+    </section>`;
+  }
+
+  function clueMiniArt(c){
+    if(c.kind==="timeline")return`<i class="clue-clock"></i>`;
+    if(c.kind==="environment")return`<i class="clue-leaf"></i>`;
+    if(c.kind==="measurement")return`<i class="clue-ruler"></i>`;
+    return`<i class="clue-object"></i>`;
+  }
+
+  function showTheoryBuilder(){
+    const d=Core.current.data,m=mysteryData(),all=allMysteryClues(m),found=d.clues.map(x=>all.find(c=>c.id===x.id)).filter(Boolean);
+    const theory=currentTheory(),saved=d.theories.filter(t=>t.saved).length;
+    const people=m.locations.map(l=>l.character.split(":")[0].replace(/^No character here.*/,"Weather"));
+    Core.modal(`<div class="modal-head"><div><small>Visual theory</small><h2 id="modal-title">Fit the pieces</h2></div><button data-action="close-modal">${V.icon("close")}</button></div><div class="theory-builder">
+      ${theoryPiece("cause","Who or what?",[...new Set(people)],theory.pieces.cause)}${theoryPiece("object","Key object",found.map(c=>c.title),theory.pieces.object)}${theoryPiece("place","Where?",m.locations.map(l=>l.name),theory.pieces.place)}${theoryPiece("time","When?",["before dawn","during rain","at low tide","after dark","overnight"],theory.pieces.time)}${theoryPiece("action","What happened?",["moved","fell","flowed","dragged","turned","opened"],theory.pieces.action)}
+    </div><div class="theory-evidence"><strong>Clues that fit</strong>${found.map(c=>`<label><input type="checkbox" data-theory-clue="${c.id}" ${theory.clueIds.includes(c.id)?"checked":""}><span>${E(c.title)}</span></label>`).join("")}</div><div class="theory-count"><span>${saved} saved ${saved===1?"theory":"theories"}</span>${saved?`<button class="soft-button" data-action="mystery-new-theory">New theory</button>`:""}</div><div class="modal-actions"><button class="primary-button" data-action="mystery-save-theory">${theory.saved?"Update theory":"Save theory"}</button><button class="soft-button" data-action="mystery-resolve" ${found.length<4?"disabled":""}>Replay answer</button></div>`,{wide:true});
+  }
+
+  function theoryPiece(key,label,options,value){return`<div class="theory-slot"><span>${label}</span><div>${options.slice(0,8).map(o=>`<button class="${value===o?"active":""}" data-action="theory-piece" data-key="${key}" data-value="${E(o)}">${E(o)}</button>`).join("")}</div></div>`;}
+
+  function renderMysteryReplay(){
+    const m=mysteryData(),d=Core.current.data,steps=[...m.resolutionClues.map(id=>allMysteryClues(m).find(c=>c.id===id)).filter(Boolean),{title:"Resolution",text:m.solution,location:"What happened"}],step=steps[d.replayStep%steps.length];
+    const loc=m.locations.find(l=>l.id===step.locationId)||m.locations[0];
+    main.innerHTML=`<section class="presentation-scene mystery-replay">${V.mysteryScene(loc,d.replayStep)}<div class="replay-card"><small>${E(step.location||"Key clue")}</small><h1>${E(step.title)}</h1><p>${E(step.text)}</p></div><div class="present-controls">${button("replay-prev","Previous","undo")}${button("replay-next","Next","redo")}${button("exit-present","Exit","close")}</div></section>`;
+  }
+
+  function evidenceData(){return C.evidenceSets.find(s=>s.id===Core.current.data.setId);}
+  function evidenceItem(id){const d=Core.current.data,set=evidenceData();return set.evidence.find(e=>e.id===id)||d.notes?.find(n=>n.id===id);}
+
+  function renderEvidence(){
+    const d=Core.current.data,set=evidenceData();if(!set)return switchContent("evidence");
+    if(route.mode==="present")return renderEvidencePresentation();
+    if(d.creator)return renderEvidenceCreator();
+    const available=set.evidence.filter(e=>!d.placed.some(p=>p.id===e.id)&&!d.hidden.includes(e.id));
+    const links=evidenceLinkSvg(d);
+    const pieces=d.placed.map(p=>{const e=evidenceItem(p.id);if(!e)return"";return`<button class="evidence-piece ${d.selected.includes(p.id)?"selected":""} ${d.flipped.includes(p.id)?"flipped":""} ${d.revealed.includes(p.id)?"revealed":""}" style="left:${p.x}%;top:${p.y}%;--rotation:${p.rotation||0}deg;--scale:${p.scale||1}" data-move="${p.id}" data-move-kind="evidence" data-action="evidence-select" data-id="${p.id}" aria-label="${E(e.title)}. Drag to move."><span class="evidence-front">${V.evidenceArt(e)}<small>${E(e.type)}</small><strong>${E(e.title)}</strong></span><span class="evidence-back"><strong>${E(e.title)}</strong><p>${E(e.text)}</p></span></button>`}).join("");
+    const scene=`<div class="evidence-stage tool-${d.tool}" data-move-board data-camera-board><div class="desk-question"><small>Investigation</small><strong>${E(set.question)}</strong></div><svg class="evidence-links" viewBox="0 0 100 100" preserveAspectRatio="none">${links}</svg>${pieces}
+      <button class="claim-token ${d.claim?"has-claim":""}" style="left:${d.claimToken.x}%;top:${d.claimToken.y}%" data-move="claim" data-move-kind="claim" data-action="evidence-claim"><i>?</i><span>${E(d.claim||"Claim")}</span></button>
+      ${available.length?`<button class="evidence-envelope" data-action="evidence-open-envelope"><span>${available.length}</span>${V.icon("folder")}<b>More evidence</b></button>`:""}
+      ${d.connections.length>=2&&d.revealed.length<1?`<button class="developing-photo" data-action="evidence-reveal"><i></i><span>Develop photo</span></button>`:""}
+    </div>`;
+    const tray=`<div class="tool-row evidence-tools">${B.tools.evidence.map(t=>`<button class="object-tool ${d.tool===t?"active":""}" data-action="evidence-tool" data-id="${t}">${V.icon(t)}<span>${t}</span></button>`).join("")}</div>`;
+    const selected=d.selected.length===1?evidenceItem(d.selected[0]):null;
+    const context=selected?`<div class="context-card"><strong>${E(selected.title)}</strong><span>${E(selected.text)}</span><div class="context-actions">${button("evidence-flip","Flip","flip")}${button("evidence-hide","Hide","close")}</div></div>`:`<button class="round-action" data-action="evidence-creator">${V.icon("duplicate")}<span>Make a case</span></button><button class="round-action" data-action="present">${V.icon("play")}<span>Present</span></button><button class="round-action" data-action="switch-content">${V.icon("folder")}<span>Cases</span></button>`;
+    main.innerHTML=workspace("evidence",scene,tray,context);
+  }
+
+  function evidenceLinkSvg(d){return d.connections.map(c=>{const a=c.a==="claim"?d.claimToken:d.placed.find(p=>p.id===c.a),b=c.b==="claim"?d.claimToken:d.placed.find(p=>p.id===c.b);if(!a||!b)return"";return`<path class="relation-${c.label.replace(/\s/g,"-")}" d="M${a.x+7} ${a.y+6} Q${(a.x+b.x)/2} ${(a.y+b.y)/2-9} ${b.x+7} ${b.y+6}"/><text x="${(a.x+b.x)/2}" y="${(a.y+b.y)/2-4}">${E(c.label)}</text>`;}).join("");}
+
+  function renderEvidenceCreator(){
+    const d=Core.current.data,c=d.creator;
+    main.innerHTML=`<section class="creator-space"><header><button class="tool-button" data-action="evidence-cancel-creator">${V.icon("close")}<span>Exit</span></button><div><small>Create an investigation</small><h1>${["Ask one question","Add evidence","Arrange the start","Ready to play"][c.step]}</h1></div></header>
+      <div class="creator-stage">${c.step===0?`<div class="single-prompt">${V.icon("question")}<input aria-label="Central question" data-creator-field="question" value="${E(c.question)}" placeholder="Why did the place change?"><button data-action="evidence-creator-next">Next</button></div>`:""}
+      ${c.step===1?`<div class="evidence-maker"><div class="type-wheel">${["photo","map","object","measurement","timeline","sound"].map(t=>`<button class="${c.type===t?"active":""}" data-action="creator-evidence-type" data-id="${t}">${V.icon(t==="photo"?"evidence":t==="timeline"?"map":t==="sound"?"listen":"question")}<span>${t}</span></button>`).join("")}</div><input aria-label="Evidence title" data-creator-field="title" value="${E(c.title)}" placeholder="Evidence title"><textarea aria-label="Evidence detail" data-creator-field="text" placeholder="What does it show?">${E(c.text)}</textarea><button data-action="creator-add-evidence">Place evidence</button><div class="created-strip">${c.evidence.map(e=>`<span>${E(e.title)}</span>`).join("")}</div><button class="next-arrow" data-action="evidence-creator-next" ${c.evidence.length<3?"disabled":""}>Arrange →</button></div>`:""}
+      ${c.step===2?`<div class="creator-arrange"><p>Choose what appears first.</p>${c.evidence.map((e,i)=>`<label><input type="checkbox" data-creator-start="${i}" ${c.start.includes(i)?"checked":""}><span>${V.evidenceArt(e)}<b>${E(e.title)}</b></span></label>`).join("")}<button data-action="evidence-creator-next">Finish</button></div>`:""}
+      ${c.step===3?`<div class="creator-finish">${V.icon("check")}<h2>${E(c.question)}</h2><p>${c.evidence.length} evidence objects are ready.</p><button data-action="evidence-play-created">Play investigation</button></div>`:""}</div></section>`;
+  }
+
+  function renderEvidencePresentation(){
+    const d=Core.current.data,set=evidenceData();
+    main.innerHTML=`<section class="presentation-scene evidence-presentation"><div class="present-question"><small>Our claim</small><h1>${E(d.claim||set.question)}</h1></div><div class="present-evidence-map"><svg viewBox="0 0 100 100" preserveAspectRatio="none">${evidenceLinkSvg(d)}</svg>${d.placed.map(p=>{const e=evidenceItem(p.id);return`<div class="evidence-piece" style="left:${p.x}%;top:${p.y}%"><span class="evidence-front">${V.evidenceArt(e)}<strong>${E(e.title)}</strong></span></div>`}).join("")}</div><div class="present-controls">${button("exit-present","Exit","close")}</div></section>`;
+  }
+
+  function renderInventor(){
+    const d=Core.current.data;if(route.mode==="present")return renderInventorReplay();
+    const weak=d.testHistory.at(-1)?.weakId;
+    const scene=`<div class="inventor-stage env-wind-${d.environment.wind} ${d.testMotion?"testing":""}" data-move-board data-camera-board><div class="bench-brief"><small>Build something that helps</small><strong>${E(d.brief.problem)}</strong><span>${E(d.brief.limits||"")}</span></div><svg class="invention-links" viewBox="0 0 100 100" preserveAspectRatio="none">${designLinks(d)}</svg>${d.parts.map(p=>`<button class="machine-part ${d.selected.includes(p.id)?"selected":""} ${p.id===weak?"weak-part":""} ${p.locked?"locked":""} shape-${p.type}" style="left:${p.x}%;top:${p.y}%;--turn:${p.rotation||0}deg;--size:${p.size||1}" data-move="${p.id}" data-move-kind="part" data-action="inventor-select" data-id="${p.id}" aria-label="${partData(p.type).name}. Drag to move.">${V.partArt(p.type)}<span>${E(p.label||partData(p.type).name)}</span></button>`).join("")}
+      <div class="test-zone" data-drop="target"><i></i><span>Target</span></div><div class="environment-controls"><label>Wind <input type="range" min="0" max="4" value="${d.environment.wind}" data-env="wind"></label><label>Water <input type="range" min="0" max="4" value="${d.environment.water}" data-env="water"></label><label>Slope <input type="range" min="0" max="4" value="${d.environment.slope}" data-env="slope"></label></div>
+      ${d.testHistory.length?testBubble(d.testHistory.at(-1)):""}
+      ${!d.parts.length?`<div class="bench-invitation">Drag a part onto the bench</div>`:""}</div>`;
+    const tray=`<div class="tool-row part-tray">${B.parts.map(p=>`<button class="part-choice" data-action="inventor-add" data-id="${p.id}">${V.partArt(p.id)}<span>${p.name}</span></button>`).join("")}</div><div class="tray-mini-tools">${B.tools.inventor.map(t=>`<button class="${d.tool===t?"active":""}" data-action="inventor-tool" data-id="${t}">${V.icon(t)}<span>${t}</span></button>`).join("")}</div>`;
+    const context=`<button class="test-lever" data-action="inventor-test" ${d.parts.length<2?"disabled":""}><i></i><span>TEST</span></button><button class="round-action" data-action="inventor-save-version">${V.icon("save")}<span>Save version</span></button>${d.versions.length?`<button class="round-action" data-action="inventor-compare">${V.icon("compare")}<span>Compare ${d.versions.length}</span></button>`:""}<button class="round-action" data-action="switch-content">${V.icon("folder")}<span>Challenges</span></button>`;
+    main.innerHTML=workspace("inventor",scene,tray,context);
+  }
+
+  function partData(id){return B.parts.find(p=>p.id===id)||B.parts[0];}
+  function designLinks(d){return d.connections.map(c=>{const a=d.parts.find(p=>p.id===c.a),b=d.parts.find(p=>p.id===c.b);return a&&b?`<line x1="${a.x+5}" y1="${a.y+5}" x2="${b.x+5}" y2="${b.y+5}"/>`:""}).join("");}
+
+  function runTest(d){
+    const types=d.parts.map(p=>p.type),unmet=[];
+    d.parts.forEach(p=>partData(p.type).needs.forEach(n=>{if(n==="support"){const support=d.parts.some(x=>x.id!==p.id&&distance(x,p)<24);if(!support)unmet.push({id:p.id,msg:"needs support"});}else if(!types.includes(n))unmet.push({id:p.id,msg:`needs ${n}`});}));
+    const disconnected=d.parts.find(p=>d.parts.length>1&&!d.connections.some(c=>c.a===p.id||c.b===p.id));
+    if(disconnected)unmet.push({id:disconnected.id,msg:"not connected"});
+    const mass=d.parts.reduce((n,p)=>n+partData(p.type).mass,0),motion=d.parts.reduce((n,p)=>n+partData(p.type).moves,0),water=d.parts.reduce((n,p)=>n+partData(p.type).water,0)/Math.max(1,d.parts.length);
+    let message="The idea moves towards the target",outcome="partial";
+    if(unmet.length){message=unmet[0].msg;outcome="fail";}
+    else if(d.brief.priorities.includes("waterproof")&&water<3){message="leaks here";outcome="fail";}
+    else if(d.brief.priorities.includes("light")&&mass>16){message="too heavy";outcome="partial";}
+    else if(d.brief.priorities.includes("movement")&&motion<8){message="almost reaches";outcome="partial";}
+    else{message="works as a system";outcome="success";}
+    return {id:Core.uid("test"),time:Date.now(),message,outcome,weakId:unmet[0]?.id||d.parts.at(-1)?.id,path:motion>10?"long":"short",partCount:d.parts.length};
+  }
+
+  function testBubble(test){return`<div class="test-bubble outcome-${test.outcome}"><span>${test.outcome==="success"?"✓":"→"}</span><strong>${E(test.message)}</strong><i>Test ${test.partCount} parts</i></div>`;}
+
+  function renderInventorReplay(){
+    const d=Core.current.data,test=d.testHistory.at(-1);
+    main.innerHTML=`<section class="presentation-scene inventor-replay ${test?`outcome-${test.outcome}`:""}"><div class="blueprint-grid"></div><h1>${E(d.brief.title)}</h1><svg class="invention-links" viewBox="0 0 100 100">${designLinks(d)}</svg>${d.parts.map(p=>`<div class="machine-part shape-${p.type}" style="left:${p.x}%;top:${p.y}%;--turn:${p.rotation||0}deg">${V.partArt(p.type)}<span>${E(p.label||partData(p.type).name)}</span></div>`).join("")}<div class="replay-result">${testBubble(test||{outcome:"partial",message:"Not tested",partCount:d.parts.length})}</div><div class="present-controls">${button("exit-present","Exit","close")}</div></section>`;
+  }
+
+  function consequenceData(){return C.consequences.find(s=>s.id===Core.current.data.scenarioId)||Core.current.data.customScenario;}
 
   function renderConsequence(){
-    const d=current.data,s=scenarioData();
-    if(d.stage==="review"||d.complete) return renderReview("consequence");
-    if(d.stage==="creator") return renderScenarioCreator();
-    const node=d.currentNode==="opening"?s.opening:s.nodes[d.currentNode],latest=d.history.at(-1);
-    main.innerHTML=`<div class="workspace-shell">${workspaceHeader("consequence",s.title)}<div class="workspace-body">
-      ${steps([{id:"play",label:"Make decisions"},{id:"review",label:"Consequence map"}],"play")}
-      <div class="consequence-layout"><section class="story-panel"><p class="eyebrow">${d.history.length?"New information":"Opening situation"}</p><h2>${escapeHTML(s.title)}</h2>
-        ${latest?`<div class="panel"><h3>What your last choice changed</h3><p><strong>${escapeHTML(latest.immediate)}</strong></p><p><em>Unexpected:</em> ${escapeHTML(latest.unintended)}</p><div class="perspective-grid">${Object.entries(latest.perspectives||{}).map(([person,copy])=>`<div class="perspective"><strong>${escapeHTML(person)}</strong><p>${escapeHTML(copy)}</p></div>`).join("")}</div></div>`:""}
-        <p class="lede">${escapeHTML(d.history.length?(node.info||""):s.setting)}</p><h3>${escapeHTML(node.prompt)}</h3>
-        <div class="choice-buttons">${node.choices.map(ch=>`<button class="story-choice" data-action="consequence-choice" data-id="${ch.id}"><strong>${escapeHTML(ch.label)}</strong><span class="muted small">Choose and examine the effects</span></button>`).join("")}</div>
-      </section><aside class="panel"><p class="eyebrow">Consequence map</p><h2>Your chain so far</h2><div class="consequence-map">${d.history.length?d.history.map(h=>`<div class="consequence-node"><span class="node-kind">Choice</span><strong>${escapeHTML(h.label)}</strong><p>${escapeHTML(h.immediate)}</p><span class="node-kind">Unexpected</span><p>${escapeHTML(h.unintended)}</p></div>`).join(""):`<p class="empty-copy">Each choice and its later effects will appear here.</p>`}</div></aside></div>
-    </div></div>`;
+    const d=Core.current.data,s=consequenceData();if(!s)return switchContent("consequence");
+    if(route.mode==="present")return renderConsequenceReplay();
+    if(d.creator)return renderScenarioCreator();
+    if(d.comparePath)return renderPathComparison();
+    const node=d.currentNode==="opening"?s.opening:s.nodes[d.currentNode];
+    if(!node&&d.complete)return renderConsequenceReplay();
+    const choices=node?.choices||[];
+    const scene=`<div class="consequence-stage" data-move-board>${V.consequenceScene(s.id,d.sceneState)}<div class="situation-strip"><small>${d.history.length?"The world changed":"What should happen next?"}</small><strong>${E(d.history.length?(node.info||node.prompt):s.setting)}</strong></div>
+      <div class="decision-zones">${choices.map((c,i)=>`<button class="decision-zone zone-${i}" data-drop="${c.id}" data-action="consequence-choice" data-id="${c.id}"><i>${i===0?"↙":"↘"}</i><strong>${E(shortChoice(c.label))}</strong><span>${E(c.label)}</span></button>`).join("")}</div>
+      ${d.resources.map(r=>`<button class="decision-token token-${r.type}" style="left:${r.x}%;top:${r.y}%" data-move="${r.id}" data-move-kind="decision-token" aria-label="Decision token. Drag to a choice.">${r.type==="people"?V.icon("home"):V.icon("consequence")}<span>${r.type}</span></button>`).join("")}
+      <div class="consequence-vitals">${vital("Nature",d.sceneState.nature)}${vital("People",d.sceneState.people)}${vital("Access",d.sceneState.access)}${vital("Supply",d.sceneState.resources)}</div>
+      ${d.history.length?`<button class="perspective-orb" data-action="consequence-perspectives"><i>${d.history.at(-1).perspectives?.length||0}</i><span>View people</span></button>`:""}</div>`;
+    const tray=`<div class="branch-trail"><button data-action="consequence-rewind" ${!d.history.length?"disabled":""}>${V.icon("rewind")}<span>Rewind</span></button>${d.history.map((h,i)=>`<button data-action="consequence-rewind-to" data-index="${i}"><i>${i+1}</i><span>${E(shortChoice(h.label))}</span></button>`).join("")}${d.complete?`<button data-action="present">${V.icon("play")}<span>Replay</span></button>`:""}</div>`;
+    const context=`<button class="round-action" data-action="consequence-save-path">${V.icon("save")}<span>Save path</span></button>${d.savedPaths.length?`<button class="round-action" data-action="consequence-compare">${V.icon("compare")}<span>Compare</span></button>`:""}<button class="round-action" data-action="scenario-create">${V.icon("duplicate")}<span>Make scenario</span></button><button class="round-action" data-action="switch-content">${V.icon("folder")}<span>Scenarios</span></button>`;
+    main.innerHTML=workspace("consequence",scene,tray,context);
   }
 
-  function scenarioCreatorData() {
-    return { title:"",setting:"",prompt:"What should happen?",aLabel:"",aImmediate:"",aUnexpected:"",aNext:"What should happen next?",a1Label:"",a1End:"",a2Label:"",a2End:"",bLabel:"",bImmediate:"",bUnexpected:"",bNext:"What should happen next?",b1Label:"",b1End:"",b2Label:"",b2End:"" };
+  function shortChoice(label){const words=label.split(/\s+/);return words.slice(0,4).join(" ")+(words.length>4?"…":"");}
+  function vital(label,value){return`<div><span>${label}</span><i>${Array.from({length:5},(_,i)=>`<b class="${i<value?"on":""}"></b>`).join("")}</i></div>`;}
+
+  function chooseConsequence(id){
+    const d=Core.current.data,s=consequenceData(),node=d.currentNode==="opening"?s.opening:s.nodes[d.currentNode],choice=node?.choices.find(c=>c.id===id);if(!choice)return;
+    Core.mutate("make decision",()=>{
+      const perspectives=Object.entries(choice.perspectives||{}).map(([person,text])=>({person,text}));
+      d.history.push({node:d.currentNode,choiceId:id,label:choice.label,immediate:choice.immediate,unintended:choice.unintended,perspectives,state:Core.copy(d.sceneState)});
+      adjustScene(d.sceneState,choice);
+      d.sceneState.time++;
+      if(choice.ending){d.ending=choice.ending;d.complete=true;d.currentNode="ending";}else d.currentNode=choice.next;
+    });
+    Core.sound("discover");
+    if(Core.current.data.complete){setTimeout(()=>{route.mode="present";render();},650);}
   }
 
-  function renderScenarioCreator(errors=[]) {
-    const d=current.data.creator;
-    main.innerHTML=`<div class="workspace-shell">${workspaceHeader("consequence","Create a playable branching scenario")}<div class="workspace-body"><div class="page narrow"><section class="panel stack"><p class="eyebrow">Scenario creator</p><h2>Build two decisions and four possible endings</h2><p>Make both first choices reasonable. A strong scenario has trade-offs, not one obviously wrong button.</p>
-      ${errors.length?`<div class="prompt-card" role="alert"><strong>Please finish these parts:</strong><ul>${errors.map(e=>`<li>${escapeHTML(e)}</li>`).join("")}</ul></div>`:""}
-      ${field("Scenario title","creator.title",d.title)}${field("Opening situation","creator.setting",d.setting,"textarea")}${field("Opening question","creator.prompt",d.prompt)}
-      <div class="review-grid"><div class="panel stack"><h3>First choice A</h3>${field("Choice","creator.aLabel",d.aLabel)}${field("Immediate result","creator.aImmediate",d.aImmediate,"textarea")}${field("Unintended consequence","creator.aUnexpected",d.aUnexpected,"textarea")}${field("Second decision","creator.aNext",d.aNext,"textarea")}${field("Final choice A1","creator.a1Label",d.a1Label)}${field("Ending A1","creator.a1End",d.a1End,"textarea")}${field("Final choice A2","creator.a2Label",d.a2Label)}${field("Ending A2","creator.a2End",d.a2End,"textarea")}</div>
-      <div class="panel stack"><h3>First choice B</h3>${field("Choice","creator.bLabel",d.bLabel)}${field("Immediate result","creator.bImmediate",d.bImmediate,"textarea")}${field("Unintended consequence","creator.bUnexpected",d.bUnexpected,"textarea")}${field("Second decision","creator.bNext",d.bNext,"textarea")}${field("Final choice B1","creator.b1Label",d.b1Label)}${field("Ending B1","creator.b1End",d.b1End,"textarea")}${field("Final choice B2","creator.b2Label",d.b2Label)}${field("Ending B2","creator.b2End",d.b2End,"textarea")}</div></div>
-      <div class="row wrap"><button class="button" data-action="scenario-validate">Check and play</button><button class="button secondary" data-action="home">Cancel</button></div>
-    </section></div></div></div>`;
+  function adjustScene(state,choice){
+    const text=`${choice.immediate} ${choice.unintended}`.toLowerCase();
+    if(/wild|habitat|plant|river|water/.test(text))state.nature=Core.clamp(state.nature+(text.includes("damage")||text.includes("disturb")?-1:1),0,5);
+    if(/access|route|path|cross|movement/.test(text))state.access=Core.clamp(state.access+1,0,5);
+    if(/cost|use|limited|less/.test(text))state.resources=Core.clamp(state.resources-1,0,5);
+    if(/fair|help|together|safer/.test(text))state.people=Core.clamp(state.people+1,0,5);
+    else if(/difficult|lose|frustrat|conflict/.test(text))state.people=Core.clamp(state.people-1,0,5);
   }
 
-  function makeCustomScenario(c) {
-    return {id:uid("custom"),title:c.title,setting:c.setting,opening:{prompt:c.prompt,choices:[
-      {id:"a",label:c.aLabel,immediate:c.aImmediate,unintended:c.aUnexpected,perspectives:{"One person":"This choice may help them in one way and challenge them in another."},next:"a-next"},
-      {id:"b",label:c.bLabel,immediate:c.bImmediate,unintended:c.bUnexpected,perspectives:{"Another person":"They may experience the choice differently."},next:"b-next"}
-    ]},nodes:{"a-next":{info:c.aUnexpected,prompt:c.aNext,choices:[{id:"a1",label:c.a1Label,immediate:"The plan changes.",unintended:"A new question remains.",ending:c.a1End},{id:"a2",label:c.a2Label,immediate:"The alternative is tried.",unintended:"It creates a different trade-off.",ending:c.a2End}]},"b-next":{info:c.bUnexpected,prompt:c.bNext,choices:[{id:"b1",label:c.b1Label,immediate:"The plan changes.",unintended:"A new question remains.",ending:c.b1End},{id:"b2",label:c.b2Label,immediate:"The alternative is tried.",unintended:"It creates a different trade-off.",ending:c.b2End}]}}};
+  function renderScenarioCreator(){
+    const d=Core.current.data,c=d.creator;
+    const titles=["Choose a setting","Place the problem","Add two actions","Link the results","Play it"];
+    main.innerHTML=`<section class="creator-space consequence-creator"><header><button class="tool-button" data-action="scenario-cancel">${V.icon("close")}<span>Exit</span></button><div><small>Scenario creator · ${c.step+1}/5</small><h1>${titles[c.step]}</h1></div></header><div class="creator-stage">
+      ${c.step===0?`<div class="setting-picker">${["river","woodland","square","island","market"].map(s=>`<button class="${c.setting===s?"active":""}" data-action="creator-setting" data-id="${s}">${V.consequenceScene(s,{nature:3,people:3,access:3,resources:3})}<span>${s}</span></button>`).join("")}</div>`:""}
+      ${c.step===1?`<div class="problem-picker">${["Not enough water","A route is blocked","Two groups need space","A storm is coming","Supplies are limited"].map(p=>`<button class="${c.problem===p?"active":""}" data-action="creator-problem" data-value="${p}">${V.icon("question")}<span>${p}</span></button>`).join("")}</div>`:""}
+      ${c.step===2?`<div class="action-builder"><label>Action A<input data-scenario-field="a" value="${E(c.a)}" placeholder="Move water"></label><label>Action B<input data-scenario-field="b" value="${E(c.b)}" placeholder="Protect the path"></label><div class="placed-characters">${["Child","Keeper","Maker"].map(p=>`<span>${V.icon("home")}${p}</span>`).join("")}</div></div>`:""}
+      ${c.step===3?`<div class="node-builder"><div><b>${E(c.a||"Action A")}</b><select aria-label="Effect of action A" data-scenario-field="aEffect"><option>helps people</option><option>protects nature</option><option>uses supplies</option><option>opens access</option></select></div><i></i><div><b>${E(c.b||"Action B")}</b><select aria-label="Effect of action B" data-scenario-field="bEffect"><option>protects nature</option><option>helps people</option><option>uses supplies</option><option>opens access</option></select></div></div>`:""}
+      ${c.step===4?`<div class="creator-finish">${V.icon("play")}<h2>${E(c.problem)}</h2><p>Two choices lead to different visible effects.</p><button data-action="scenario-play-created">Play scenario</button></div>`:""}
+      ${c.step<4?`<button class="creator-next" data-action="scenario-next">Next →</button>`:""}</div></section>`;
   }
 
-  function renderReview(app) {
-    current.data.stage="review";
-    queueSave(true);
-    const content=reviewContent(app);
-    main.innerHTML=`<button class="button presentation-exit" data-action="exit-present">Exit presentation</button><div class="workspace-shell">${workspaceHeader(app,current.title)}<div class="workspace-body">
-      <div class="review-toolbar no-print"><button class="button secondary" data-action="return-edit">${icon("back")} Keep editing</button><button class="button" data-action="present">${icon("present")} Present</button><button class="button secondary" data-action="print">${icon("print")} Print</button><button class="button secondary" data-action="export">${icon("download")} Export text</button>${app==="mystery"?`<button class="button secondary" data-action="mystery-reset">${icon("replay")} Replay case</button>`:""}</div>
-      <article class="review-sheet">${content}</article>
-    </div></div>`;
+  function renderPathComparison(){
+    const d=Core.current.data,currentPath={history:d.history,state:d.sceneState,ending:d.ending},saved=d.savedPaths[d.comparePath-1]||d.savedPaths[0];
+    main.innerHTML=`<section class="comparison-space"><header><button class="tool-button" data-action="consequence-close-compare">${V.icon("close")}<span>Close</span></button><h1>Two possible paths</h1></header><div class="split-world"><div>${V.consequenceScene("saved",saved.state)}<h2>Saved path</h2>${compareVitals(saved.state)}</div><div>${V.consequenceScene("current",currentPath.state)}<h2>Current path</h2>${compareVitals(currentPath.state)}</div></div><div class="comparison-branches">${[saved,currentPath].map(path=>`<ol>${path.history.map(h=>`<li>${E(shortChoice(h.label))}</li>`).join("")}</ol>`).join("")}</div></section>`;
+  }
+  function compareVitals(s){return`<div class="compare-vitals">${vital("Nature",s.nature)}${vital("People",s.people)}${vital("Access",s.access)}${vital("Supply",s.resources)}</div>`;}
+
+  function renderConsequenceReplay(){
+    const d=Core.current.data,s=consequenceData(),step=d.replayStep||0,h=d.history[step];
+    main.innerHTML=`<section class="presentation-scene consequence-replay">${V.consequenceScene(s.id,h?.state||d.sceneState)}<div class="replay-card"><small>${h?`Decision ${step+1}`:"Outcome"}</small><h1>${E(h?.label||s.title)}</h1><p>${E(h?.immediate||d.ending||s.setting)}</p>${h?.unintended?`<strong>Later: ${E(h.unintended)}</strong>`:""}</div><div class="present-controls">${button("consequence-replay-prev","Previous","undo")}${button("consequence-replay-next","Next","redo")}${button("exit-present","Exit","close")}</div></section>`;
   }
 
-  function reviewContent(app) {
-    const d=current.data;
-    if(app==="world") return `<header class="review-hero"><p class="eyebrow">World profile</p><h1>${escapeHTML(current.title)}</h1><p class="lede">${escapeHTML(d.scale||"A newly imagined place")} · ${escapeHTML(d.climate||"Climate not yet described")}</p></header><div class="review-grid">
-      <section class="review-section"><h3>World overview</h3><p><strong>Inhabitants:</strong> ${nl2br(d.inhabitants||"Not yet decided")}</p><p><strong>Creatures:</strong> ${nl2br(d.creatures||"Not yet decided")}</p><p><strong>Resources:</strong> ${nl2br(d.resources||"Not yet decided")}</p></section>
-      <section class="review-section"><h3>Rules and customs</h3><p>${nl2br(d.rules||"No rule recorded")}</p><p>${nl2br(d.customs||"No custom recorded")}</p></section>
-      <section class="review-section" style="grid-column:1/-1"><h3>World map</h3><div class="map-board review-board terrain-${escapeHTML(d.terrain)}">${worldLinks(d)}${d.locations.map(l=>`<div class="board-node" style="left:${l.x}%;top:${l.y}%"><span class="node-symbol">${nodeIcon(l.symbol)}</span><span class="node-name">${escapeHTML(l.name)}</span></div>`).join("")}</div></section>
-      <section class="review-section"><h3>Key locations</h3><ul>${d.locations.map(l=>`<li><strong>${escapeHTML(l.name)}</strong> — ${escapeHTML(l.notes||"An important place")}</li>`).join("")||"<li>No locations placed yet.</li>"}</ul></section>
-      <section class="review-section"><h3>Pressure and possibility</h3><p><strong>Danger:</strong> ${nl2br(d.dangers||"Unknown")}</p><p><strong>Current problem:</strong> ${nl2br(d.problem||"Not yet decided")}</p><p><strong>Secret:</strong> ${nl2br(d.secret||"Still hidden")}</p></section>
-      <section class="review-section"><h3>Unanswered questions</h3><ul>${d.promptNotes.map(p=>`<li>${escapeHTML(p)}</li>`).join("")||"<li>What might change here tomorrow?</li>"}</ul></section>
-      <section class="review-section"><h3>Possible story openings</h3><ul><li>The day the usual rule stopped working…</li><li>A visitor arrives at ${escapeHTML(d.locations[0]?.name||"the edge of the world")} carrying something impossible…</li><li>Someone discovers the truth about ${escapeHTML(d.secret||"an old secret")}…</li></ul></section>
-    </div>`;
-    if(app==="mystery") {
-      const m=mysteryData(); const selected=d.theory.evidenceIds.map(id=>findMysteryClue(m,id));
-      return `<header class="review-hero"><p class="eyebrow">Investigation record</p><h1>${m.title}</h1><p class="lede">${m.question}</p></header><div class="review-grid">
-        <section class="review-section"><h3>Final theory</h3><p>${nl2br(d.theory.text||"No theory recorded")}</p></section>
-        <section class="review-section"><h3>Supporting clues</h3><ul>${selected.map(c=>`<li><strong>${c.title}</strong> — ${c.text}</li>`).join("")||"<li>No clues selected.</li>"}</ul></section>
-        <section class="review-section"><h3>Reasoning comparison</h3>${m.resolutionClues.filter(id=>d.theory.evidenceIds.includes(id)).length>=2?"<p><strong>Strongly supported:</strong> Your theory uses several clues that matter to the resolution.</p>":"<p><strong>Possible but missing evidence:</strong> Revisit the clues that connect a location, an object and the timing.</p>"}<ul>${selected.map(c=>`<li><strong>${m.resolutionClues.includes(c.id)?"Strongly supported":c.role==="distraction"?"Contradicted by the resolution":"Thoughtful supporting detail"}:</strong> ${escapeHTML(c.title)}</li>`).join("")}</ul><p><strong>Hardest clue:</strong> ${nl2br(d.theory.hard||"Not recorded")}</p></section>
-        <section class="review-section"><h3>Resolution</h3><p>${m.solution}</p></section>
-        <section class="review-section"><h3>Alternative explanation</h3><p>${nl2br(d.theory.alternative||"None recorded")}</p></section>
-        <section class="review-section"><h3>Next investigation</h3><p>${nl2br(d.theory.next||"No next step recorded")}</p></section>
-      </div>`;
-    }
-    if(app==="evidence") {
-      const set=evidenceSet(); const supports=d.support.map(id=>set.evidence.find(e=>e.id===id)||d.notes.find(n=>n.id===id)).filter(Boolean);
-      return `<header class="review-hero"><p class="eyebrow">Evidence explanation</p><h1>${set.title}</h1><p class="lede">${set.question}</p></header><div class="review-grid">
-        <section class="review-section" style="grid-column:1/-1"><h3>Evidence board</h3><div class="evidence-board review-board">${evidenceLinks(d)}${d.placed.map(p=>{const e=set.evidence.find(x=>x.id===p.id)||d.notes.find(x=>x.id===p.id);return e?`<div class="evidence-card" data-group="${p.group||""}" style="left:${p.x}%;top:${p.y}%"><span class="evidence-type">${e.type||"note"}</span><h4>${escapeHTML(e.title)}</h4><p>${escapeHTML(e.text)}</p></div>`:""}).join("")}</div></section>
-        <section class="review-section"><h3>Main claim</h3><p>${nl2br(d.claim||"No claim recorded")}</p></section>
-        <section class="review-section"><h3>Supporting evidence</h3><ul>${supports.map(e=>`<li><strong>${e.title}</strong> — ${e.text}</li>`).join("")||"<li>No supporting evidence attached.</li>"}</ul></section>
-        <section class="review-section"><h3>Conflicting evidence</h3><p>${nl2br(d.contradiction||"No contradiction recorded")}</p></section>
-        <section class="review-section"><h3>Remaining uncertainty</h3><p>${nl2br(d.uncertainty||"No uncertainty recorded")}</p></section>
-        <section class="review-section"><h3>Next question</h3><p>${nl2br(d.nextQuestion||"No next question recorded")}</p></section>
-        <section class="review-section"><h3>Board summary</h3><p>${d.placed.length} evidence items placed · ${d.connections.length} relationships drawn · ${d.hidden.length} hidden items</p></section>
-      </div>`;
-    }
-    if(app==="inventor") {
-      return `<header class="review-hero"><p class="eyebrow">Final design sheet</p><h1>${escapeHTML(current.title)}</h1><p class="lede">${escapeHTML(d.brief.problem)}</p></header><div class="review-grid">
-        <section class="review-section" style="grid-column:1/-1"><h3>Labelled plan</h3><div class="design-board review-board">${designLinks(d)}${d.parts.map(p=>{const m=C.inventor.materials.find(x=>x.id===p.material);return`<div class="design-part" style="left:${p.x}%;top:${p.y}%;width:${p.w}px;height:${p.h}px;transform:rotate(${p.rotation}deg)"><span class="part-name">${escapeHTML(p.label||m.name)}</span></div>`}).join("")}</div></section>
-        <section class="review-section"><h3>Chosen materials</h3><ul>${d.parts.map(p=>{const m=C.inventor.materials.find(x=>x.id===p.material);return`<li><strong>${escapeHTML(p.label||m.name)}</strong> — ${escapeHTML(p.job||"job not yet explained")}${p.movement?` Movement: ${escapeHTML(p.movement)}.`:""} <small>(${m.properties.join(", ")})</small></li>`}).join("")}</ul></section>
-        <section class="review-section"><h3>Simplified test</h3>${d.tests?Object.entries(d.tests.scores).map(([k,v])=>`<p><strong>${k}:</strong> ${ratingWord(v)}</p>`).join(""):"<p>Not tested yet.</p>"}</section>
-        <section class="review-section"><h3>One strength</h3><p>${nl2br(d.strength||"Not recorded")}</p></section>
-        <section class="review-section"><h3>One weakness</h3><p>${nl2br(d.weakness||"Not recorded")}</p></section>
-        <section class="review-section"><h3>Improvement</h3><p>${nl2br(d.changeReason||"Not recorded")}</p></section>
-        <section class="review-section"><h3>Iterations</h3><p>${d.iterations.length} saved version${d.iterations.length===1?"":"s"}. A real prototype is the next test.</p></section>
-      </div>`;
-    }
-    const s=scenarioData();
-    return `<header class="review-hero"><p class="eyebrow">Consequence map</p><h1>${escapeHTML(s.title)}</h1><p class="lede">${escapeHTML(s.setting)}</p></header><div class="review-grid">
-      <section class="review-section"><h3>Decision chain</h3>${d.history.map((h,i)=>`<p><strong>${i+1}. ${escapeHTML(h.label)}</strong><br>${escapeHTML(h.immediate)}<br><em>Unexpected: ${escapeHTML(h.unintended)}</em></p>`).join("")}</section>
-      <section class="review-section"><h3>Where it led</h3><p>${escapeHTML(d.ending||"The outcome is still unfolding.")}</p></section>
-      <section class="review-section" style="grid-column:1/-1"><h3>Perspectives affected</h3><div class="perspective-grid">${d.history.flatMap(h=>Object.entries(h.perspectives||{})).map(([person,copy])=>`<div class="perspective"><strong>${escapeHTML(person)}</strong><p>${escapeHTML(copy)}</p></div>`).join("")||"<p>No perspectives recorded.</p>"}</div></section>
-      <section class="review-section"><h3>What did you intend?</h3>${field("", "reflection.intend", d.reflection.intend, "textarea")}</section>
-      <section class="review-section"><h3>What was unexpected?</h3>${field("", "reflection.unexpected", d.reflection.unexpected, "textarea")}</section>
-      <section class="review-section"><h3>Who benefited? Who had difficulty?</h3>${field("Who benefited", "reflection.benefit", d.reflection.benefit, "textarea")}${field("Who had difficulty", "reflection.difficulty", d.reflection.difficulty, "textarea")}</section>
-      <section class="review-section"><h3>Would you choose it again?</h3>${field("Your judgement", "reflection.same", d.reflection.same, "textarea")}${field("A new option you would create", "reflection.newOption", d.reflection.newOption, "textarea")}</section>
-    </div>`;
+  function renderLibrary(){
+    route.mode="edit";const items=[...Core.library.items].sort((a,b)=>b.updatedAt-a.updatedAt);
+    main.innerHTML=`<section class="creation-room"><header><div><small>The creation drawer</small><h1>Things worth returning to</h1></div><div>${button("home","Workshop","home")}${button("import-json","Import","export")}</div></header><div class="creation-shelves">${items.map(item=>`<article class="creation-folder folder-${item.app}"><button class="folder-cover" data-action="continue" data-id="${item.id}">${V.icon(item.app)}<span><small>${appNames[item.app]}</small><strong>${E(item.title)}</strong><i>${new Date(item.updatedAt).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}</i></span></button><div class="folder-tools">${button("library-present","Present","play",`data-id="${item.id}"`)}${button("duplicate","Copy","duplicate",`data-id="${item.id}"`)}${button("rename","Rename","question",`data-id="${item.id}"`)}${button("export-item","Export","export",`data-id="${item.id}"`)}${button("delete-item","Delete","delete",`data-id="${item.id}"`)}</div></article>`).join("")}${!items.length?`<div class="empty-shelf">${V.icon("folder")}<h2>Your first creation will rest here.</h2><button data-action="home">Enter the Workshop</button></div>`:""}</div>${items.length?`<button class="clear-library" data-action="clear-library">Clear all data</button>`:""}</section>`;
   }
 
-  function returnEdit() {
-    if(!current)return;
-    const stages={world:"build",mystery:"theory",evidence:"claim",inventor:"test",consequence:current.data.complete?"review":"play"};
-    current.data.stage=stages[current.app];
-    if(current.app==="consequence"&&current.data.complete) current.data.complete=false;
-    renderCurrent();
+  function switchContent(app=route.page){
+    const entries=app==="world"?B.worldSeeds.map(id=>({id,title:id==="blank"?"Blank world":`${id[0].toUpperCase()+id.slice(1)} seed`,copy:"Touch to shape"})):
+      app==="mystery"?C.mysteries.map(x=>({id:x.id,title:x.title,copy:(x.message||x.intro).split(/[.!?]/)[0]})):
+      app==="evidence"?C.evidenceSets.map(x=>({id:x.id,title:x.title,copy:x.subject})):
+      app==="inventor"?C.inventor.briefs.map(x=>({id:x.id,title:x.title,copy:x.problem})):
+      C.consequences.map(x=>({id:x.id,title:x.title,copy:x.setting}));
+    Core.modal(`<div class="modal-head"><div><small>${appNames[app]}</small><h2 id="modal-title">Choose a new start</h2></div><button data-action="close-modal">${V.icon("close")}</button></div><div class="visual-chooser">${entries.map((x,i)=>`<button data-action="choose-content" data-app="${app}" data-id="${x.id}"><span class="chooser-art">${app==="world"?seedArt(x.id):app==="inventor"?V.partArt(B.parts[i%B.parts.length].id):V.icon(app)}</span><strong>${E(x.title)}</strong><small>${E(x.copy)}</small></button>`).join("")}</div>`,{wide:true});
   }
 
-  function renderLibrary() {
-    view={name:"library"}; current=null;
-    const items=[...library.items].sort((a,b)=>b.updatedAt-a.updatedAt);
-    main.innerHTML=`<div class="library-page"><p class="eyebrow">Saved on this device</p><h1>Your creations</h1><p class="lede">Clearing browser data may remove this work. Export or print anything you need to keep elsewhere.</p>
-      <div class="row wrap" style="margin-bottom:1.5rem"><button class="button secondary" data-action="home">${icon("back")} Workshop</button>${items.length?`<button class="button danger" data-action="reset-library">Reset all saved work</button>`:""}</div>
-      <section class="library-grid">${items.length?items.map(i=>`<article class="library-card"><div><p class="eyebrow">${C.apps[i.app]?.name||"Workshop"}</p><h2>${escapeHTML(i.title)}</h2><p class="muted small">Edited ${formatDate(i.updatedAt)}</p></div><div class="library-preview">${icon(i.app)}</div><div class="library-actions"><button class="button small-button" data-action="continue" data-id="${i.id}">Continue</button><button class="button secondary small-button" data-action="rename-item" data-id="${i.id}">Rename</button><button class="button secondary small-button" data-action="duplicate" data-id="${i.id}">Duplicate</button><button class="button secondary small-button" data-action="library-present" data-id="${i.id}">Present</button><button class="button secondary small-button" data-action="library-print" data-id="${i.id}">Print</button><button class="button danger small-button" data-action="delete-item" data-id="${i.id}" aria-label="Delete ${escapeHTML(i.title)}">${icon("trash")}</button></div></article>`).join(""):`<p class="empty-copy">Nothing is saved yet. Choose a space and begin.</p>`}</section>
-    </div>`;
-    window.scrollTo(0,0);
-  }
+  function seedArt(seed){return`<span class="seed-orb seed-${seed}"><i></i><b></b></span>`;}
 
-  function openModal(content, wide=false) {
-    modalRoot.innerHTML=`<div class="modal-backdrop" role="presentation" data-action="modal-backdrop"><section class="modal ${wide?"wide":""}" role="dialog" aria-modal="true" aria-labelledby="modal-title">${content}</section></div>`;
-    modalRoot.querySelector("button, input, textarea, select")?.focus();
+  function chooseContent(app,id){
+    Core.closeModal();
+    if(app==="world"){Core.create("world",`${id[0].toUpperCase()+id.slice(1)} world`,newWorld(id));}
+    if(app==="mystery"){const m=C.mysteries.find(x=>x.id===id);Core.create(app,m.title,newMystery(id));}
+    if(app==="evidence"){const s=C.evidenceSets.find(x=>x.id===id);Core.create(app,s.title,newEvidence(id));}
+    if(app==="inventor"){const b=C.inventor.briefs.find(x=>x.id===id);Core.create(app,b.title,newInventor(b));}
+    if(app==="consequence"){const s=C.consequences.find(x=>x.id===id);Core.create(app,s.title,newConsequence(id));}
+    route.page=app;render();
   }
-  function closeModal(){modalRoot.innerHTML="";}
 
   function settingsModal(){
-    openModal(`<div class="modal-header"><div><p class="eyebrow">Settings</p><h2 id="modal-title">Make the space comfortable</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div>
-      ${[["sound","Gentle sounds","Short confirmation tones only"],["reducedMotion","Reduced motion","Remove movement effects"],["largeText","Larger text","Increase text throughout the Workshop"],["simplified","Simplified screens","Hide non-essential decoration"]].map(([key,title,copy])=>`<div class="setting-row"><div><strong>${title}</strong><div class="muted small">${copy}</div></div><label class="switch"><input type="checkbox" data-setting="${key}" ${settings[key]?"checked":""}><span></span></label></div>`).join("")}
-      <button class="button" data-action="fullscreen">Enter full screen</button>`);
+    const s=Core.settings;
+    Core.modal(`<div class="modal-head"><div><small>Comfort</small><h2 id="modal-title">Workshop settings</h2></div><button data-action="close-modal">${V.icon("close")}</button></div><div class="settings-list">${settingToggle("sound","Sound effects",s.sound)}${settingToggle("ambience","Ambient sound",s.ambience)}${settingToggle("reducedSound","Quieter sound",s.reducedSound)}${settingToggle("reducedMotion","Reduced motion",s.reducedMotion)}${settingToggle("highClarity","High clarity",s.highClarity)}${settingToggle("largeText","Larger text",s.largeText)}${settingToggle("lockedCamera","Lock camera",s.lockedCamera)}</div>`);
   }
+  function settingToggle(id,label,on){return`<label><span>${label}</span><input type="checkbox" data-setting="${id}" ${on?"checked":""}><i></i></label>`;}
 
   function helpModal(){
-    openModal(`<div class="modal-header"><div><p class="eyebrow">Help</p><h2 id="modal-title">How The Workshop works</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div>
-      <div class="stack"><div><h3>Choose a space</h3><p>Each room begins with a complete example, a starting point or a blank option.</p></div><div><h3>Make and investigate</h3><p>Use the large controls. On boards, drag cards or objects with a finger, mouse or trackpad.</p></div><div><h3>Your work stays here</h3><p>Work saves automatically in this browser. It is not uploaded. Clearing browser data may remove it.</p></div><div><h3>Review, present and print</h3><p>Use Review to create a calm final view, then present full-screen, print on A4 or export a text summary.</p></div></div>
-      <div class="row wrap"><button class="button secondary" data-action="replay-onboarding">Replay introduction</button><button class="button" data-action="close-modal">Done</button></div>`);
+    const app=route.page;
+    const tips={home:["Touch a place","Your work saves here"],world:["Paint the land","Place things","Change the weather"],mystery:["Try a tool","Open clues","Connect two"],evidence:["Move evidence","Use the tools","Build a claim"],inventor:["Place parts","Connect them","Pull TEST"],consequence:["Move a token","Watch the world","Rewind and branch"]}[app]||["Touch to begin"];
+    Core.modal(`<div class="modal-head"><div><small>Show me</small><h2 id="modal-title">What can I try?</h2></div><button data-action="close-modal">${V.icon("close")}</button></div><div class="visual-help">${tips.map((tip,i)=>`<div><i>${i+1}</i><span>${tip}</span></div>`).join("")}</div><button class="primary-button" data-action="show-gesture">Show one action</button>`);
   }
 
-  function onboarding(screen=0){
-    const cards=[
-      {icon:"world",title:"Choose a space",copy:"Five doorways lead to making, investigation, evidence, design and decisions."},
-      {icon:"inventor",title:"Make, investigate or decide",copy:"There are no points to chase. The reward is something you can explain and share."},
-      {icon:"save",title:"Saved on this device",copy:"Your work stays in this browser. No account, real name or internet upload is needed."}
-    ];
-    openModal(`<div class="onboarding" data-screen="${screen}">${cards.map((c,i)=>`<div class="screen ${i===screen?"active":""}"><div class="onboarding-illustration">${icon(c.icon)}</div><p class="eyebrow">${i+1} of 3</p><h2 id="modal-title">${c.title}</h2><p class="lede">${c.copy}</p></div>`).join("")}<div class="row between"><button class="text-button" data-action="onboarding-skip">Skip</button><button class="button" data-action="onboarding-next">${screen===2?"Enter The Workshop":"Next"} ${icon("arrow")}</button></div></div>`);
+  function outputHTML(){
+    const item=Core.current;if(!item)return"";
+    if(item.app==="world"){const d=item.data;return`<h1>${E(item.title)}</h1><p>${worldSummary(d)}</p><div class="print-world">${d.objects.map(o=>`${V.miniWorld(o.type)}<b>${E(o.name)}</b>`).join("")}</div>`;}
+    if(item.app==="mystery"){const m=mysteryData(),d=item.data;return`<h1>${E(m.title)}</h1><p>${E(m.question)}</p><div class="print-clues">${d.clues.map(c=>{const clue=allMysteryClues(m).find(x=>x.id===c.id);return`<span>${E(clue?.title)}</span>`}).join("")}</div><p>${E(m.solution)}</p>`;}
+    if(item.app==="evidence"){const d=item.data,set=evidenceData();return`<h1>${E(set.title)}</h1><h2>${E(d.claim||set.question)}</h2><div class="print-links">${d.connections.map(c=>`<span>${E(evidenceItem(c.a)?.title||"Claim")} — ${E(c.label)} — ${E(evidenceItem(c.b)?.title||"Claim")}</span>`).join("")}</div>`;}
+    if(item.app==="inventor"){const d=item.data;return`<h1>${E(d.brief.title)}</h1><p>${E(d.brief.problem)}</p><div class="print-blueprint">${d.parts.map(p=>`<span>${V.partArt(p.type)}<b>${E(p.label||partData(p.type).name)}</b></span>`).join("")}</div><p>${E(d.testHistory.at(-1)?.message||"Ready for a physical test")}</p>`;}
+    const d=item.data,s=consequenceData();return`<h1>${E(s.title)}</h1><div>${d.history.map((h,i)=>`<p><b>${i+1}. ${E(h.label)}</b><br>${E(h.immediate)}<br>Later: ${E(h.unintended)}</p>`).join("")}</div><p>${E(d.ending||"")}</p>`;
   }
 
-  function exportText(){
-    if(!current)return;
-    const temp=document.createElement("div"); temp.innerHTML=reviewContent(current.app);
-    const text=`THE WORKSHOP\n${current.title}\n${C.apps[current.app].name}\n\n${temp.innerText.replace(/\n{3,}/g,"\n\n")}`;
-    const blob=new Blob([text],{type:"text/plain"}); const url=URL.createObjectURL(blob); const a=document.createElement("a");
-    a.href=url; a.download=`${current.title.replace(/[^a-z0-9]+/gi,"-").replace(/^-|-$/g,"")||"workshop-creation"}.txt`; a.click(); URL.revokeObjectURL(url); announce("Text summary exported");
+  function printOutput(){
+    const holder=document.querySelector("#print-root");holder.innerHTML=`<article class="print-sheet"><small>The Workshop · ${appNames[Core.current.app]}</small>${outputHTML()}<footer>${new Date().toLocaleDateString("en-GB")}</footer></article>`;window.print();
   }
 
-  function setNested(root,path,value){
-    const bits=path.split("."); let target=root;
-    for(let i=0;i<bits.length-1;i++) target=target[bits[i]];
-    target[bits.at(-1)]=value;
+  function showOutput(){Core.modal(`<div class="modal-head"><div><small>Visual output</small><h2 id="modal-title">Ready to share</h2></div><button data-action="close-modal">${V.icon("close")}</button></div><div class="output-preview">${outputHTML()}</div><div class="modal-actions"><button class="primary-button" data-action="present">${V.icon("play")} Present</button><button class="soft-button" data-action="print">${V.icon("print")} Print</button><button class="soft-button" data-action="export-summary">${V.icon("export")} Text</button><button class="soft-button" data-action="export-current">${V.icon("save")} JSON</button></div>`,{wide:true});}
+
+  function showNameModal(id){const object=findMovable("world-object",id)||findMovable("world-person",id);if(!object)return;Core.modal(`<div class="modal-head"><h2 id="modal-title">Name this</h2><button data-action="close-modal">${V.icon("close")}</button></div><label class="single-field"><span>Short name</span><input id="object-name" maxlength="28" value="${E(object.name)}"></label><button class="primary-button" data-action="save-object-name" data-id="${id}">Save name</button>`);}
+
+  function findMovable(kind,id){
+    const d=Core.current?.data;if(!d)return null;
+    if(kind==="world-object")return d.objects.find(x=>x.id===id);
+    if(kind==="world-person")return d.people.find(x=>x.id===id);
+    if(kind==="evidence")return d.placed.find(x=>x.id===id);
+    if(kind==="claim")return d.claimToken;
+    if(kind==="part")return d.parts.find(x=>x.id===id);
+    if(kind==="decision-token")return d.resources.find(x=>x.id===id);
+    return null;
   }
 
-  function handleField(el){
-    if(!current)return;
-    const path=el.dataset.field; let value=el.value;
-    if(path==="title"){current.title=value||"Untitled world";current.data.title=current.title;}
-    else if(path.startsWith("selected.")){const loc=current.data.locations.find(l=>l.id===current.data.selectedLocation);if(loc)setNested(loc,path.replace("selected.",""),value);}
-    else if(path.startsWith("part.")){const part=current.data.parts.find(p=>p.id===current.data.selected);if(part){const key=path.slice(5);if(key==="size"){part.w=Number(value);part.h=Math.round(Number(value)*.62);}else part[key]=value;}}
-    else if(path.startsWith("creator.")) setNested(current.data.creator,path.slice(8),value);
-    else setNested(current.data,path,value);
-    queueSave(true);
-    refreshActionAvailability();
-  }
+  function move(kind,id,x,y){const object=findMovable(kind,id);if(object){object.x=Number(x.toFixed(2));object.y=Number(y.toFixed(2));}}
+  function drop(kind,id,target){if(kind==="decision-token"&&target)chooseConsequence(target);}
+  function zoom(delta,rerender=true){const d=Core.current?.data;if(!d?.camera||Core.settings.lockedCamera)return;d.camera.zoom=Core.clamp((d.camera.zoom||1)+delta,.72,1.65);Core.queueSave();if(rerender)render();}
 
-  function refreshActionAvailability(){
-    if(!current)return;
-    if(current.app==="mystery"&&current.data.stage==="theory"){
-      const button=document.querySelector('[data-action="mystery-reveal"]');
-      if(button)button.disabled=!current.data.theory.text.trim()||!current.data.theory.evidenceIds.length;
-    }
-    if(current.app==="evidence"&&current.data.stage==="claim"){
-      const button=document.querySelector('.panel.stack > [data-action="review"]');
-      if(button)button.disabled=!current.data.claim.trim()||!current.data.support.length;
-    }
-    if(current.app==="inventor"&&current.data.stage==="test"){
-      const button=document.querySelector('.panel.stack [data-action="review"]');
-      if(button)button.disabled=!current.data.tests||!current.data.strength.trim()||!current.data.weakness.trim();
-    }
-  }
+  document.addEventListener("click",event=>{
+    const el=event.target.closest("[data-action]");if(!el)return;const action=el.dataset.action;
+    if(action==="enter-app")return startDefault(el.dataset.app);
+    if(action==="continue")return startDefault(null,el.dataset.id);
+    if(action==="home"){Core.closeModal();route={page:"home",mode:"edit",drawer:null};return render();}
+    if(action==="library"){Core.closeModal();route={page:"library",mode:"edit",drawer:null};return render();}
+    if(action==="settings")return settingsModal();
+    if(action==="toggle-sound"){Core.setSetting("sound",!Core.settings.sound);Core.announce(Core.settings.sound?"Sound on":"Sound muted");return;}
+    if(action==="help")return helpModal();
+    if(action==="close-modal"){if(el===event.target&&el.classList.contains("modal-shade")||!el.classList.contains("modal-shade"))Core.closeModal();return;}
+    if(action==="undo")return Core.undo();if(action==="redo")return Core.redo();
+    if(action==="manual-save")return Core.saveCurrent(false);
+    if(action==="show-gesture"){Core.closeModal();return showGesture(route.page);}
+    if(action==="show-output")return showOutput();
+    if(action==="print")return printOutput();
+    if(action==="export-current")return Core.exportJSON();
+    if(action==="export-summary")return Core.exportSummary(outputHTML(),Core.current?.title);
+    if(action==="present"){Core.closeModal();route.mode="present";document.documentElement.requestFullscreen?.().catch(()=>{});return render();}
+    if(action==="exit-present"){route.mode="edit";if(document.fullscreenElement)document.exitFullscreen?.();return render();}
+    if(action==="switch-content")return switchContent(route.page);
+    if(action==="choose-content")return chooseContent(el.dataset.app,el.dataset.id);
+    if(action==="zoom-in")return zoom(.12);if(action==="zoom-out")return zoom(-.12);if(action==="fit-view"){const d=Core.current.data;if(d.camera)d.camera={x:0,y:0,zoom:1};return render();}
 
-  document.addEventListener("click", event => {
-    const el=event.target.closest("[data-action]"); if(!el)return;
-    const action=el.dataset.action;
-    if(action==="home") return renderHome();
-    if(action==="library") return renderLibrary();
-    if(action==="help") return helpModal();
-    if(action==="settings") return settingsModal();
-    if(action==="close-modal") return closeModal();
-    if(action==="modal-backdrop"&&event.target===el) return closeModal();
-    if(action==="open-app") return openApp(el.dataset.app);
-    if(action==="continue") return openApp(library.items.find(i=>i.id===el.dataset.id)?.app,el.dataset.id);
-    if(action==="manual-save") return saveCurrent(false);
-    if(action==="review") { if(current){current.data.stage="review";saveCurrent(true);renderReview(current.app);} return; }
-    if(action==="return-edit") return returnEdit();
-    if(action==="print") return window.print();
-    if(action==="export") return exportText();
-    if(action==="present") {document.body.classList.add("presentation-mode");document.documentElement.requestFullscreen?.().catch(()=>{});return;}
-    if(action==="exit-present") {document.body.classList.remove("presentation-mode");if(document.fullscreenElement)document.exitFullscreen?.();return;}
-    if(action==="fullscreen") {closeModal();document.documentElement.requestFullscreen?.().catch(()=>announce("Full screen is not available in this browser"));return;}
-    if(action==="world-start") return startWorld(el.dataset.kind);
-    if(action==="world-example") return startWorld("example",Number(el.dataset.index));
-    if(action==="world-select"){current.data.selectedLocation=el.dataset.id;renderWorld();return;}
-    if(action==="world-add") return openWorldLocationModal();
-    if(action==="world-save-location") return saveWorldLocation();
-    if(action==="world-delete-location") return confirmWorldLocationDelete();
-    if(action==="confirm-world-location-delete") return deleteWorldLocation();
-    if(action==="world-link") {const target=document.querySelector("#world-link-target")?.value,from=current.data.selectedLocation;if(target&&from&&!current.data.links.some(p=>p.includes(from)&&p.includes(target))){current.data.links.push([from,target]);queueSave();renderWorld();}return;}
-    if(action==="world-shuffle-prompt"){const others=C.world.prompts.filter(p=>p!==current.data.currentPrompt);current.data.currentPrompt=others[Math.floor(Math.random()*others.length)];renderWorld();queueSave();return;}
-    if(action==="world-keep-prompt"){if(!current.data.promptNotes.includes(current.data.currentPrompt))current.data.promptNotes.push(current.data.currentPrompt);announce("Question kept");queueSave();return;}
-    if(action==="world-dismiss-prompt"){current.data.currentPrompt="What detail would make this world feel real?";renderWorld();return;}
-    if(action==="world-remove-prompt"){current.data.promptNotes.splice(Number(el.dataset.index),1);queueSave();renderWorld();return;}
-    if(action==="mystery-start") return startMystery(el.dataset.id);
-    if(action==="mystery-location"){current.data.selectedLocation=el.dataset.id;if(!current.data.visited.includes(el.dataset.id))current.data.visited.push(el.dataset.id);queueSave();renderMystery();return;}
-    if(action==="collect-clue"){current.data.clues.push({id:el.dataset.id,status:"uncertain"});announce("Clue added to the tray");tone();queueSave();renderMystery();return;}
-    if(action==="mystery-reveal"){current.data.revealed=true;current.data.stage="review";saveCurrent(true);renderReview("mystery");return;}
-    if(action==="mystery-reset") return confirmMysteryReset();
-    if(action==="confirm-mystery-reset") return resetMystery();
-    if(action==="evidence-start") return startEvidence(el.dataset.id);
-    if(action==="evidence-add"){const n=current.data.placed.length;current.data.placed.push({id:el.dataset.id,x:6+(n%3)*29,y:8+Math.floor(n/3)*23,group:""});queueSave();renderEvidence();return;}
-    if(action==="evidence-select"){current.data.selected=el.dataset.id;renderEvidence();return;}
-    if(action==="evidence-group"){const p=current.data.placed.find(x=>x.id===current.data.selected);if(p)p.group=el.dataset.group;queueSave();renderEvidence();return;}
-    if(action==="evidence-hide"){const id=current.data.selected;current.data.placed=current.data.placed.filter(p=>p.id!==id);current.data.connections=current.data.connections.filter(c=>c.a!==id&&c.b!==id);if(!current.data.notes.some(n=>n.id===id))current.data.hidden.push(id);current.data.selected=null;queueSave();renderEvidence();return;}
-    if(action==="evidence-restore"){current.data.hidden=[];queueSave();renderEvidence();return;}
-    if(action==="evidence-note") return openEvidenceNoteModal();
-    if(action==="evidence-save-note") return saveEvidenceNote();
-    if(action==="evidence-link"){const target=document.querySelector("#evidence-link-target")?.value,label=document.querySelector("#evidence-link-label")?.value,from=current.data.selected;if(target&&from){current.data.connections.push({a:from,b:target,label});queueSave();renderEvidence();}return;}
-    if(action==="inventor-start") return startInventor(el.dataset.id);
-    if(action==="inventor-custom") return openInventorBriefModal();
-    if(action==="inventor-save-custom") return saveInventorBrief();
-    if(action==="inventor-add"){const n=current.data.parts.length;current.data.parts.push({id:uid("part"),material:el.dataset.id,x:10+(n%4)*20,y:12+Math.floor(n/4)*20,w:100,h:62,rotation:0,label:"",job:"",movement:""});queueSave();renderInventor();return;}
-    if(action==="inventor-select"){current.data.selected=el.dataset.id;renderInventor();return;}
-    if(action==="inventor-rotate"){const p=current.data.parts.find(x=>x.id===current.data.selected);if(p)p.rotation=(p.rotation+15)%360;queueSave();renderInventor();return;}
-    if(action==="inventor-remove"){const id=current.data.selected;current.data.parts=current.data.parts.filter(p=>p.id!==id);current.data.connections=current.data.connections.filter(c=>c.a!==id&&c.b!==id);current.data.selected=null;queueSave();renderInventor();return;}
-    if(action==="inventor-link"){const target=document.querySelector("#inventor-link-target")?.value,from=current.data.selected;if(target&&from&&!current.data.connections.some(c=>c.a===from&&c.b===target||c.a===target&&c.b===from)){current.data.connections.push({a:from,b:target});queueSave();renderInventor();}return;}
-    if(action==="inventor-run-test"){testDesign();renderInventorTest();return;}
-    if(action==="inventor-save-iteration"){current.data.iterations.push({parts:deepCopy(current.data.parts),connections:deepCopy(current.data.connections),tests:deepCopy(current.data.tests),strength:current.data.strength,weakness:current.data.weakness,changeReason:current.data.changeReason});announce("Iteration saved for comparison");queueSave();renderInventorTest();return;}
-    if(action==="consequence-start") return startConsequence(el.dataset.id);
-    if(action==="consequence-choice") return chooseConsequence(el.dataset.id);
-    if(action==="consequence-create"){createItem("consequence","Untitled scenario",{stage:"creator",creator:scenarioCreatorData(),history:[],reflection:{intend:"",unexpected:"",benefit:"",difficulty:"",same:"",newOption:""}});renderScenarioCreator();return;}
-    if(action==="scenario-validate") return validateScenario();
-    if(action==="set-stage"){current.data.stage=el.dataset.stage;queueSave();renderCurrent();return;}
-    if(action==="duplicate") return duplicateItem(el.dataset.id);
-    if(action==="rename-item") return renameItemModal(el.dataset.id);
-    if(action==="confirm-rename") return renameItem(el.dataset.id);
-    if(action==="delete-item") return confirmDelete(el.dataset.id);
-    if(action==="confirm-delete") return deleteItem(el.dataset.id);
-    if(action==="reset-library") return confirmReset();
-    if(action==="confirm-reset"){library={version:DATA_VERSION,items:[]};persistLibrary();closeModal();renderLibrary();announce("Saved work removed from this device");return;}
-    if(action==="library-present"||action==="library-print"){const item=library.items.find(i=>i.id===el.dataset.id);if(item){openApp(item.app,item.id);current.data.stage="review";renderReview(item.app);window.setTimeout(()=>action==="library-print"?window.print():document.querySelector('[data-action="present"]')?.click(),100);}return;}
-    if(action==="replay-onboarding"){closeModal();onboarding(0);return;}
-    if(action==="onboarding-skip"){localStorage.setItem(ONBOARDING_KEY,"done");closeModal();return;}
-    if(action==="onboarding-next"){const box=modalRoot.querySelector(".onboarding");const screen=Number(box?.dataset.screen||0);if(screen>=2){localStorage.setItem(ONBOARDING_KEY,"done");closeModal();}else onboarding(screen+1);return;}
+    if(action==="world-palette"){Core.current.data.palette=el.dataset.id;return render();}
+    if(action==="world-tool"){Core.current.data.tool=el.dataset.id;return render();}
+    if(action==="world-paint")return paintWorldTile(Number(el.dataset.index));
+    if(action==="world-add-object")return addWorldObject(el.dataset.id);
+    if(action==="world-add-person")return addWorldPerson(el.dataset.id);
+    if(action==="world-select"){Core.current.data.selected=el.dataset.id;return render();}
+    if(action==="world-deselect"){Core.current.data.selected=null;return render();}
+    if(action==="world-weather")return setWorldWeather(el.dataset.id);
+    if(action==="world-event")return addWorldEvent();
+    if(action==="world-event-choice")return resolveWorldEvent(Number(el.dataset.index));
+    if(action==="world-name")return showNameModal(Core.current.data.selected);
+    if(action==="save-object-name")return saveObjectName(el.dataset.id);
+    if(action==="world-duplicate")return duplicateWorldObject(Core.current.data.selected);
+    if(action==="world-delete")return deleteWorldObject(Core.current.data.selected);
+    if(action==="tour-next"||action==="tour-prev"){const d=Core.current.data,n=d.objects.length+d.people.length;d.tour=(d.tour+(action==="tour-next"?1:-1)+Math.max(1,n))%Math.max(1,n);return render();}
+
+    if(action==="mystery-tool"){Core.current.data.tool=el.dataset.id;return render();}
+    if(action==="mystery-location")return changeMysteryLocation(el.dataset.id);
+    if(action==="mystery-inspect")return inspectMysteryClue(el.dataset.id,el);
+    if(action==="mystery-notebook"){Core.current.data.mode="notebook";return render();}
+    if(action==="mystery-scene"){Core.current.data.mode="scene";return render();}
+    if(action==="mystery-clue-select")return selectMysteryClue(el.dataset.id);
+    if(action==="mystery-connect")return connectMysteryClues();
+    if(action==="mystery-timeline")return addMysteryTimeline();
+    if(action==="mystery-hint")return mysteryHint();
+    if(action==="mystery-theory")return showTheoryBuilder();
+    if(action==="theory-piece"){setTheoryPiece(el.dataset.key,el.dataset.value);return showTheoryBuilder();}
+    if(action==="mystery-save-theory")return saveTheory();
+    if(action==="mystery-new-theory")return newTheory();
+    if(action==="mystery-resolve"){Core.closeModal();Core.current.data.replayStep=0;route.mode="present";return render();}
+    if(action==="replay-next"||action==="replay-prev"){const d=Core.current.data,m=mysteryData(),n=m.resolutionClues.length+1;d.replayStep=(d.replayStep+(action==="replay-next"?1:-1)+n)%n;return render();}
+    if(action==="speak")return Core.speak(el.dataset.text,el);
+
+    if(action==="evidence-tool"){Core.current.data.tool=el.dataset.id;pendingConnection=[];return render();}
+    if(action==="evidence-select")return selectEvidence(el.dataset.id);
+    if(action==="evidence-open-envelope")return openEvidence();
+    if(action==="evidence-flip")return flipEvidence();
+    if(action==="evidence-hide")return hideEvidence();
+    if(action==="evidence-reveal")return revealEvidence();
+    if(action==="evidence-claim")return claimModal();
+    if(action==="save-claim")return saveClaim();
+    if(action==="evidence-creator")return startEvidenceCreator();
+    if(action==="evidence-cancel-creator"){Core.current.data.creator=null;return render();}
+    if(action==="evidence-creator-next")return evidenceCreatorNext();
+    if(action==="creator-evidence-type"){Core.current.data.creator.type=el.dataset.id;return render();}
+    if(action==="creator-add-evidence")return creatorAddEvidence();
+    if(action==="evidence-play-created")return playCreatedEvidence();
+
+    if(action==="inventor-add")return addPart(el.dataset.id);
+    if(action==="inventor-tool"){Core.current.data.tool=el.dataset.id;Core.current.data.selected=[];return render();}
+    if(action==="inventor-select")return selectPart(el.dataset.id);
+    if(action==="inventor-test")return testInvention();
+    if(action==="inventor-save-version")return saveVersion();
+    if(action==="inventor-compare")return showInventorVersions();
+
+    if(action==="consequence-choice")return chooseConsequence(el.dataset.id);
+    if(action==="consequence-perspectives")return perspectiveModal();
+    if(action==="consequence-save-path")return savePath();
+    if(action==="consequence-rewind")return rewindConsequence(-1);
+    if(action==="consequence-rewind-to")return rewindConsequence(Number(el.dataset.index));
+    if(action==="consequence-compare"){Core.current.data.comparePath=1;return render();}
+    if(action==="consequence-close-compare"){Core.current.data.comparePath=null;return render();}
+    if(action==="scenario-create")return startScenarioCreator();
+    if(action==="scenario-cancel"){Core.current.data.creator=null;return render();}
+    if(action==="creator-setting"){Core.current.data.creator.setting=el.dataset.id;return render();}
+    if(action==="creator-problem"){Core.current.data.creator.problem=el.dataset.value;return render();}
+    if(action==="scenario-next")return scenarioNext();
+    if(action==="scenario-play-created")return playCreatedScenario();
+    if(action==="consequence-replay-next"||action==="consequence-replay-prev"){const d=Core.current.data,n=d.history.length;d.replayStep=Core.clamp((d.replayStep||0)+(action.endsWith("next")?1:-1),0,n);return render();}
+
+    if(action==="duplicate"){Core.duplicate(el.dataset.id);Core.announce("Creation copied");return render();}
+    if(action==="rename")return renameModal(el.dataset.id);
+    if(action==="confirm-rename"){Core.rename(el.dataset.id,document.querySelector("#rename-value")?.value||"");Core.closeModal();return render();}
+    if(action==="export-item")return Core.exportJSON(Core.library.items.find(i=>i.id===el.dataset.id));
+    if(action==="delete-item")return confirmDelete(el.dataset.id);
+    if(action==="confirm-delete"){Core.remove(el.dataset.id);Core.closeModal();return render();}
+    if(action==="library-present"){startDefault(null,el.dataset.id);route.mode="present";return render();}
+    if(action==="clear-library")return clearLibraryModal();
+    if(action==="confirm-clear"){Core.resetLibrary();Core.closeModal();return render();}
+    if(action==="import-json")return document.querySelector("#json-import")?.click();
   });
 
-  document.addEventListener("input",event=>{const el=event.target;if(el.matches("[data-field]"))handleField(el);});
-  document.addEventListener("change",event=>{
+  function paintWorldTile(index){
+    const d=Core.current.data,tool=d.tool;
+    Core.mutate("shape land",()=>{if(tool==="raise")d.elevation[index]=Core.clamp((d.elevation[index]||1)+1,0,4);else if(tool==="lower")d.elevation[index]=Core.clamp((d.elevation[index]||1)-1,0,4);else if(B.terrains.some(t=>t.id===tool))d.tiles[index]=tool;},false);
+    const cell=document.querySelector(`[data-index="${index}"]`);if(cell){cell.className=`world-tile tile-${d.tiles[index]} level-${d.elevation[index]}`;cell.innerHTML=`<span>${terrainGlyph(d.tiles[index])}</span>`;}Core.sound("place");
+  }
+
+  function addWorldObject(type){Core.mutate("place object",d=>{const o=worldObject(type);d.objects.push({id:Core.uid("place"),type,name:o.name,x:38+(d.objects.length%4)*9,y:38+(d.objects.length%3)*10,note:"",state:"calm"});d.selected=d.objects.at(-1).id;checkWorldDiscoveries(d);});Core.sound("place");}
+  function addWorldPerson(type){Core.mutate("place inhabitant",d=>{const p=B.inhabitants.find(x=>x.id===type);d.people.push({id:Core.uid("person"),type,name:p.name,need:p.need,x:48+(d.people.length%4)*7,y:59+(d.people.length%2)*9});d.selected=d.people.at(-1).id;});Core.sound("place");}
+  function setWorldWeather(value){Core.mutate("change weather",d=>{if(value==="night")d.time=d.time==="night"?"day":"night";else d.weather=value;checkWorldDiscoveries(d);});Core.sound("open");}
+  function checkWorldDiscoveries(d){if(d.time==="night"&&d.objects.some(o=>o.type==="cave")&&!d.discoveries.includes("A hidden door opens beneath the cave"))d.discoveries.push("A hidden door opens beneath the cave");if(d.weather==="rain"&&d.objects.some(o=>o.type==="ruins")&&!d.discoveries.includes("Rain reveals old markings in the ruins"))d.discoveries.push("Rain reveals old markings in the ruins");}
+  function addWorldEvent(){const template=Core.copy(B.eventDeck[(Core.current.data.events.length+Core.current.data.objects.length)%B.eventDeck.length]);template.id=Core.uid("event");template.choices=["Help now","Watch first","Change world"];Core.mutate("begin event",d=>d.events.push(template));}
+  function resolveWorldEvent(index){Core.mutate("respond to event",d=>{const e=d.events.at(-1);e.resolved=true;e.choice=index;if(index===2&&e.effect==="rain")d.weather="rain";if(index===0)d.people.forEach(p=>p.need="celebration");});Core.sound("discover");}
+  function saveObjectName(id){const value=document.querySelector("#object-name")?.value.trim();if(!value)return;Core.closeModal();Core.mutate("name object",()=>{const o=findMovable("world-object",id)||findMovable("world-person",id);o.name=value;});}
+  function duplicateWorldObject(id){Core.mutate("duplicate object",d=>{const src=[...d.objects,...d.people].find(o=>o.id===id);if(!src)return;const dest=d.objects.includes(src)?d.objects:d.people;dest.push({...Core.copy(src),id:Core.uid("copy"),x:Core.clamp(src.x+7,2,86),y:Core.clamp(src.y+7,2,84)});d.selected=dest.at(-1).id;});}
+  function deleteWorldObject(id){Core.mutate("remove object",d=>{d.objects=d.objects.filter(o=>o.id!==id);d.people=d.people.filter(o=>o.id!==id);d.selected=null;});}
+
+  function changeMysteryLocation(id){Core.mutate("visit place",d=>{d.locationId=id;if(!d.visited.includes(id))d.visited.push(id);});Core.sound("open");}
+  function inspectMysteryClue(id,el){const d=Core.current.data,m=mysteryData(),clue=allMysteryClues(m).find(c=>c.id===id);if(d.clues.some(c=>c.id===id)){Core.announce("Already in your pouch");return;}const raw=clue.action||"magnify",expected=B.tools.mystery.includes(raw)?raw:["compare","trace","align","measure"].includes(raw)?"magnify":"hand";if(d.tool!=="hand"&&d.tool!==expected){Core.announce(`Try ${expected}`);el.classList.add("wrong-tool");setTimeout(()=>el.classList.remove("wrong-tool"),700);return;}el.classList.add("revealing");setTimeout(()=>{Core.mutate("discover clue",d=>d.clues.push({id,status:"found"}));Core.sound("discover");Core.announce(clue.title);},420);}
+  function selectMysteryClue(id){const d=Core.current.data;const next=d.selectedClues.includes(id)?d.selectedClues.filter(x=>x!==id):[...d.selectedClues.slice(-1),id];d.selectedClues=next;render();}
+  function connectMysteryClues(){const d=Core.current.data;if(d.selectedClues.length!==2)return;Core.mutate("connect clues",d=>{if(!d.clueLinks.some(p=>p.includes(d.selectedClues[0])&&p.includes(d.selectedClues[1])))d.clueLinks.push([...d.selectedClues]);d.selectedClues=[];});Core.sound("discover");}
+  function addMysteryTimeline(){const d=Core.current.data,id=d.selectedClues[0];if(!id)return;Core.mutate("place on timeline",d=>{if(!d.timeline.includes(id))d.timeline.push(id);d.selectedClues=[];});}
+  function mysteryHint(){const d=Core.current.data;d.hints=Core.clamp(d.hints+1,0,3);const loc=mysteryData().locations.find(l=>l.id===d.locationId),unfound=loc.clues.find(c=>!d.clues.some(x=>x.id===c.id));if(d.hints===1)document.querySelector(".location-ribbon button:not(.visited)")?.classList.add("hint-glow");else if(d.hints===2)document.querySelector(`[data-id="${unfound?.id}"]`)?.classList.add("hint-glow");else{Core.current.data.tool=unfound?.action||"magnify";render();document.querySelector(`[data-id="${unfound?.id}"]`)?.classList.add("gesture-demo");}Core.announce(["A useful place is glowing","One object matters here","Try this action"][d.hints-1]);Core.queueSave();}
+  function blankTheory(){return{id:Core.uid("theory"),pieces:{cause:"",object:"",place:"",time:"",action:""},clueIds:[],note:"",saved:false};}
+  function currentTheory(){const d=Core.current.data;if(!d.theories.length)d.theories.push(blankTheory());return d.theories.at(-1);}
+  function setTheoryPiece(key,value){currentTheory().pieces[key]=value;Core.queueSave();}
+  function saveTheory(){const root=document.querySelector("[data-modal]"),ids=[...root.querySelectorAll("[data-theory-clue]:checked")].map(x=>x.dataset.theoryClue),t=currentTheory();t.clueIds=ids;t.saved=true;Core.saveCurrent(true);Core.closeModal();Core.announce("Theory saved");render();}
+  function newTheory(){Core.current.data.theories.push(blankTheory());Core.queueSave();Core.closeModal();showTheoryBuilder();}
+
+  function selectEvidence(id){const d=Core.current.data;if(d.tool==="flip"){d.selected=[id];return flipEvidence();}if(d.tool==="rotate"){const p=d.placed.find(x=>x.id===id);Core.mutate("rotate evidence",()=>p.rotation=(p.rotation+18)%360);return;}if(d.tool==="magnify"){const p=d.placed.find(x=>x.id===id);Core.mutate("magnify evidence",()=>p.scale=p.scale>=1.35?1:1.35);return;}if(d.tool==="measure"){d.selected=[id];Core.announce(`${evidenceItem(id).title}: compare its scale and source`);return render();}if(["string","compare"].includes(d.tool)){d.selected=d.selected.includes(id)?d.selected.filter(x=>x!==id):[...d.selected.slice(-1),id];if(d.selected.length===2){const label=d.tool==="compare"?"fits":"supports";Core.mutate("connect evidence",d=>{d.connections.push({a:d.selected[0],b:d.selected[1],label});d.selected=[];});Core.sound("discover");}else render();return;}d.selected=d.selected.includes(id)?[]:[id];render();}
+  function openEvidence(){const d=Core.current.data,set=evidenceData(),next=set.evidence.find(e=>!d.placed.some(p=>p.id===e.id)&&!d.hidden.includes(e.id));if(!next)return;Core.mutate("open evidence",d=>d.placed.push({id:next.id,x:60+(d.placed.length%2)*15,y:20+(d.placed.length%3)*18,rotation:(d.placed.length%3-1)*4,scale:1,group:""}));Core.sound("open");}
+  function flipEvidence(){const d=Core.current.data,id=d.selected[0];if(!id)return;Core.mutate("flip evidence",d=>{d.flipped=d.flipped.includes(id)?d.flipped.filter(x=>x!==id):[...d.flipped,id];},false);render();}
+  function hideEvidence(){const d=Core.current.data,id=d.selected[0];if(!id)return;Core.mutate("hide evidence",d=>{d.placed=d.placed.filter(p=>p.id!==id);d.hidden.push(id);d.connections=d.connections.filter(c=>c.a!==id&&c.b!==id);d.selected=[];});}
+  function revealEvidence(){const d=Core.current.data,set=evidenceData(),id=set.evidence.find(e=>!d.placed.some(p=>p.id===e.id)&&!d.hidden.includes(e.id))?.id;if(!id)return;Core.mutate("reveal evidence",d=>{d.placed.push({id,x:66,y:48,rotation:2,scale:1,group:""});d.revealed.push(id);});Core.sound("discover");}
+  function claimModal(){const d=Core.current.data;Core.modal(`<div class="modal-head"><h2 id="modal-title">Place your claim</h2><button data-action="close-modal">${V.icon("close")}</button></div><label class="single-field"><span>One clear sentence</span><textarea id="claim-value" maxlength="180">${E(d.claim)}</textarea></label><div class="relation-picker">${B.relationLabels.slice(4).map(r=>`<span>${r}</span>`).join("")}</div><button class="primary-button" data-action="save-claim">Place claim</button>`);}
+  function saveClaim(){const value=document.querySelector("#claim-value")?.value.trim();if(!value)return;Core.closeModal();Core.mutate("place claim",d=>{d.claim=value;if(d.selected.length===1)d.connections.push({a:"claim",b:d.selected[0],label:"supports"});d.selected=[];});}
+  function startEvidenceCreator(){Core.mutate("start creator",d=>d.creator={step:0,question:"",type:"photo",title:"",text:"",evidence:[],start:[]});}
+  function evidenceCreatorNext(){const c=Core.current.data.creator;if(c.step===0&&!c.question.trim())return Core.announce("Add one clear question");if(c.step===1&&c.evidence.length<3)return Core.announce("Add at least three pieces");c.step=Core.clamp(c.step+1,0,3);Core.queueSave();render();}
+  function creatorAddEvidence(){const c=Core.current.data.creator;if(!c.title.trim()||!c.text.trim())return Core.announce("Add a title and detail");c.evidence.push({id:Core.uid("custom-evidence"),type:c.type,title:c.title,text:c.text});c.title="";c.text="";Core.queueSave();render();}
+  function playCreatedEvidence(){const d=Core.current.data,c=d.creator,id=Core.uid("custom-set");C.evidenceSets.push({id,title:"My investigation",subject:"Created case",question:c.question,context:"A locally created investigation.",evidence:Core.copy(c.evidence)});Core.current.title="My investigation";Core.current.data=newEvidence(id);Core.saveCurrent(true);render();}
+
+  function addPart(type){Core.mutate("place part",d=>{d.parts.push({id:Core.uid("part"),type,x:38+(d.parts.length%4)*10,y:34+(d.parts.length%3)*13,rotation:0,size:1,label:""});d.selected=[d.parts.at(-1).id];});Core.sound("place");}
+  function selectPart(id){const d=Core.current.data;if(d.tool==="delete"){Core.mutate("remove part",d=>{d.parts=d.parts.filter(p=>p.id!==id);d.connections=d.connections.filter(c=>c.a!==id&&c.b!==id);});return;}if(d.tool==="rotate"){Core.mutate("rotate part",()=>{const p=d.parts.find(x=>x.id===id);p.rotation=(p.rotation+30)%360;});return;}if(d.tool==="resize"){Core.mutate("resize part",()=>{const p=d.parts.find(x=>x.id===id);p.size=p.size>=1.2?.8:Number((p.size+.2).toFixed(1));});return;}if(d.tool==="lock"){Core.mutate("lock part",()=>{const p=d.parts.find(x=>x.id===id);p.locked=!p.locked;});Core.announce(d.parts.find(x=>x.id===id).locked?"Part locked":"Part unlocked");return;}if(d.tool==="duplicate"){Core.mutate("duplicate part",d=>{const p=d.parts.find(x=>x.id===id);d.parts.push({...Core.copy(p),id:Core.uid("part"),x:p.x+6,y:p.y+7,locked:false});});return;}if(d.tool==="connect"){d.selected=d.selected.includes(id)?d.selected.filter(x=>x!==id):[...d.selected.slice(-1),id];if(d.selected.length===2){Core.mutate("connect parts",d=>{d.connections.push({a:d.selected[0],b:d.selected[1]});d.selected=[];});Core.sound("discover");}else render();return;}d.selected=d.selected.includes(id)?[]:[id];render();}
+  function testInvention(){const d=Core.current.data,test=runTest(d);Core.mutate("test invention",d=>{d.testHistory.push(test);d.testMotion=test.outcome;},false);Core.sound("test");render();setTimeout(()=>{if(Core.current){Core.current.data.testMotion=null;render();}},1400);}
+  function saveVersion(){const d=Core.current.data;if(!d.parts.length)return;Core.mutate("save version",d=>d.versions.push({id:Core.uid("version"),parts:Core.copy(d.parts),connections:Core.copy(d.connections),test:Core.copy(d.testHistory.at(-1)||null)}));Core.announce(`Version ${d.versions.length} saved`);}
+  function showInventorVersions(){
+    const d=Core.current.data,versions=[...d.versions,{id:"current",parts:d.parts,connections:d.connections,test:d.testHistory.at(-1)||null,current:true}];
+    const cards=versions.map((v,i)=>{const before=versions[i-1]?.parts||[],changed=i?Math.max(0,v.parts.length-before.length)+v.parts.filter(p=>!before.some(b=>b.type===p.type)).length:v.parts.length;return`<article class="version-card ${v.current?"current":""}"><header><small>${v.current?"Current design":`Version ${i+1}`}</small><strong>${v.test?.message||"Not tested"}</strong></header><div class="version-parts">${v.parts.slice(0,8).map(p=>V.partArt(p.type)).join("")}</div><footer><span>${v.parts.length} parts</span><span>${v.connections.length} joins</span><span>${i?`${changed} changes`:"First idea"}</span></footer></article>`;}).join("");
+    Core.modal(`<div class="modal-head"><div><small>Blueprint shelf</small><h2 id="modal-title">See what changed</h2></div><button data-action="close-modal">${V.icon("close")}</button></div><div class="version-comparison">${cards}</div><p class="modal-note">Each saved blueprint keeps its parts, joins and latest test.</p>`,{wide:true});
+  }
+
+  function perspectiveModal(){const h=Core.current.data.history.at(-1);Core.modal(`<div class="modal-head"><div><small>People affected</small><h2 id="modal-title">Different views</h2></div><button data-action="close-modal">${V.icon("close")}</button></div><div class="perspective-portraits">${(h?.perspectives||[]).map((p,i)=>`<button data-action="speak" data-text="${E(p.text)}"><i class="portrait p-${i}"></i><strong>${E(p.person)}</strong><span>${E(p.text)}</span>${V.icon("speak")}</button>`).join("")}</div>`);}
+  function savePath(){const d=Core.current.data;if(!d.history.length)return Core.announce("Make one decision first");d.savedPaths.push({history:Core.copy(d.history),state:Core.copy(d.sceneState),ending:d.ending,currentNode:d.currentNode});Core.queueSave();Core.announce("Path saved for comparison");render();}
+  function rewindConsequence(index){const d=Core.current.data,s=consequenceData();if(index<0){d.history=[];d.currentNode="opening";d.sceneState={nature:3,people:3,access:3,resources:3,time:0};d.complete=false;d.ending="";}else{const entry=d.history[index];d.history=d.history.slice(0,index);d.currentNode=entry.node;d.sceneState=Core.copy(entry.state);d.complete=false;d.ending="";}Core.queueSave();render();}
+  function startScenarioCreator(){Core.mutate("start scenario creator",d=>d.creator={step:0,setting:"river",problem:"",a:"",b:"",aEffect:"helps people",bEffect:"protects nature"});}
+  function scenarioNext(){const c=Core.current.data.creator;if(c.step===1&&!c.problem)return Core.announce("Choose a problem");if(c.step===2&&(!c.a.trim()||!c.b.trim()))return Core.announce("Add two actions");c.step=Core.clamp(c.step+1,0,4);Core.queueSave();render();}
+  function playCreatedScenario(){
+    const d=Core.current.data,c=d.creator,id=Core.uid("scenario");
+    const effect=(label,text)=>({id:Core.uid("choice"),label,immediate:text==="helps people"?"People gain support.":text==="protects nature"?"The environment begins to recover.":text==="opens access"?"A route opens.":"Supplies are used.",unintended:text==="helps people"?"Another group waits longer.":"The change creates a new pressure."});
+    const a=effect(c.a,c.aEffect),b=effect(c.b,c.bEffect),a1=effect("Adjust it","helps people"),a2=effect("Continue","uses supplies"),b1=effect("Adjust it","protects nature"),b2=effect("Continue","opens access");
+    const finalNode=(source,key)=>({info:source.unintended,prompt:"What matters later?",choices:[{...effect("Review the plan","helps people"),id:`${key}-review`,ending:"The plan changes with new evidence, while one question remains."},{...effect("Keep the plan","uses supplies"),id:`${key}-keep`,ending:"The plan continues and its unresolved pressure stays visible."}]});
+    C.consequences.push({id,title:"My scenario",setting:`${c.problem} in the ${c.setting}.`,opening:{prompt:"What should happen next?",choices:[{...a,next:"a-later"},{...b,next:"b-later"}]},nodes:{
+      "a-later":{info:a.unintended,prompt:"Adjust or continue?",choices:[{...a1,next:"a1-final"},{...a2,next:"a2-final"}]},
+      "b-later":{info:b.unintended,prompt:"Adjust or continue?",choices:[{...b1,next:"b1-final"},{...b2,next:"b2-final"}]},
+      "a1-final":finalNode(a1,"a1"),"a2-final":finalNode(a2,"a2"),"b1-final":finalNode(b1,"b1"),"b2-final":finalNode(b2,"b2")
+    }});
+    Core.current.title="My scenario";Core.current.data=newConsequence(id);Core.saveCurrent(true);render();
+  }
+
+  function renameModal(id){const item=Core.library.items.find(i=>i.id===id);Core.modal(`<div class="modal-head"><h2 id="modal-title">Rename creation</h2><button data-action="close-modal">${V.icon("close")}</button></div><label class="single-field"><span>Title</span><input id="rename-value" value="${E(item?.title||"")}"></label><button class="primary-button" data-action="confirm-rename" data-id="${id}">Save title</button>`);}
+  function confirmDelete(id){const item=Core.library.items.find(i=>i.id===id);Core.modal(`<div class="modal-head"><h2 id="modal-title">Remove this creation?</h2><button data-action="close-modal">${V.icon("close")}</button></div><p>${E(item?.title||"")}</p><div class="modal-actions"><button class="danger-button" data-action="confirm-delete" data-id="${id}">Delete</button><button class="soft-button" data-action="close-modal">Keep it</button></div>`);}
+  function clearLibraryModal(){Core.modal(`<div class="modal-head"><h2 id="modal-title">Clear every creation?</h2><button data-action="close-modal">${V.icon("close")}</button></div><p>Export anything important first. This cannot be undone.</p><div class="modal-actions"><button class="danger-button" data-action="confirm-clear">Clear all data</button><button class="soft-button" data-action="close-modal">Cancel</button></div>`);}
+
+  document.addEventListener("input",event=>{
     const el=event.target;
-    if(el.matches("[data-field]")){handleField(el);if(["terrain","selected.symbol"].includes(el.dataset.field))renderCurrent();}
-    if(el.matches("[data-setting]")){settings[el.dataset.setting]=el.checked;applySettings();}
-    if(el.matches("[data-clue-status]")){const c=current.data.clues.find(x=>x.id===el.dataset.clueStatus);if(c)c.status=el.value;queueSave();}
-    if(el.matches("[data-clue-link]")){const from=el.dataset.clueLink,to=el.value;current.data.clueLinks||=[];current.data.clueLinks=current.data.clueLinks.filter(pair=>!pair.includes(from));if(to){current.data.clueLinks.push([from,to]);const clue=current.data.clues.find(c=>c.id===from);if(clue)clue.status="connected";announce("Clues connected");}queueSave();}
-    if(el.matches("[data-theory-clue]")){toggleArray(current.data.theory.evidenceIds,el.dataset.theoryClue,el.checked);queueSave();refreshActionAvailability();}
-    if(el.matches("[data-support-evidence]")){toggleArray(current.data.support,el.dataset.supportEvidence,el.checked);queueSave();refreshActionAvailability();}
+    if(el.dataset.action==="world-water"){Core.current.data.waterLevel=Number(el.value);Core.queueSave();}
+    if(el.dataset.env){Core.current.data.environment[el.dataset.env]=Number(el.value);Core.queueSave();}
+    if(el.dataset.creatorField)Core.current.data.creator[el.dataset.creatorField]=el.value;
+    if(el.dataset.scenarioField)Core.current.data.creator[el.dataset.scenarioField]=el.value;
+  });
+  document.addEventListener("change",event=>{
+    const el=event.target;if(el.dataset.setting)Core.setSetting(el.dataset.setting,el.checked);
+    if(el.dataset.creatorStart){const c=Core.current.data.creator,i=Number(el.dataset.creatorStart);if(el.checked&&!c.start.includes(i))c.start.push(i);if(!el.checked)c.start=c.start.filter(x=>x!==i);Core.queueSave();}
   });
 
-  function toggleArray(arr,value,on){const i=arr.indexOf(value);if(on&&i<0)arr.push(value);if(!on&&i>=0)arr.splice(i,1);}
+  document.addEventListener("pointerdown",event=>{if(event.target.closest("[data-action='world-paint']"))worldPainting=true;});
+  document.addEventListener("pointerover",event=>{if(worldPainting){const tile=event.target.closest("[data-action='world-paint']");if(tile)paintWorldTile(Number(tile.dataset.index));}});
+  document.addEventListener("pointerup",()=>worldPainting=false);
+  document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement&&route.mode==="present"){route.mode="edit";render();}});
+  document.querySelector("#json-import")?.addEventListener("change",async event=>{const file=event.target.files?.[0];if(file){await Core.importJSON(file);render();}event.target.value="";});
 
-  function openWorldLocationModal(){openModal(`<div class="modal-header"><div><p class="eyebrow">World map</p><h2 id="modal-title">Add an important place</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><div class="stack"><label class="field"><span>Place name</span><input id="new-location-name" autofocus></label><label class="field"><span>Symbol</span><select id="new-location-symbol">${["home","tree","water","tower","gate","harbour","gear","flag","star"].map(v=>`<option>${v}</option>`).join("")}</select></label><label class="field"><span>What happens here?</span><textarea id="new-location-notes"></textarea></label><button class="button" data-action="world-save-location">Add to map</button></div>`);}
-  function saveWorldLocation(){const name=document.querySelector("#new-location-name")?.value.trim();if(!name)return announce("Give the place a name");const n=current.data.locations.length;const loc={id:uid("loc"),name,symbol:document.querySelector("#new-location-symbol").value,notes:document.querySelector("#new-location-notes").value,x:10+(n%4)*21,y:12+Math.floor(n/4)*23};current.data.locations.push(loc);current.data.selectedLocation=loc.id;closeModal();queueSave();renderWorld();}
-  function confirmWorldLocationDelete(){const loc=current.data.locations.find(l=>l.id===current.data.selectedLocation);if(!loc)return;openModal(`<div class="modal-header"><div><p class="eyebrow">World map</p><h2 id="modal-title">Remove ${escapeHTML(loc.name)}?</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><p>The place and its map connections will be removed.</p><div class="row wrap"><button class="button danger" data-action="confirm-world-location-delete">Remove place</button><button class="button secondary" data-action="close-modal">Keep it</button></div>`);}
-  function deleteWorldLocation(){const id=current.data.selectedLocation;current.data.locations=current.data.locations.filter(l=>l.id!==id);current.data.links=current.data.links.filter(pair=>!pair.includes(id));current.data.selectedLocation=null;closeModal();queueSave();renderWorld();announce("Place removed");}
-  function confirmMysteryReset(){openModal(`<div class="modal-header"><div><p class="eyebrow">Replay case</p><h2 id="modal-title">Start this mystery again?</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><p>Your collected clues, notes and theory in this saved case will be cleared.</p><div class="row wrap"><button class="button danger" data-action="confirm-mystery-reset">Reset and replay</button><button class="button secondary" data-action="close-modal">Keep my work</button></div>`);}
-  function resetMystery(){const m=mysteryData();current.data={stage:"investigate",mysteryId:m.id,visited:[],selectedLocation:m.locations[0].id,clues:[],clueLinks:[],notes:"",theory:{text:"",evidenceIds:[],hard:"",alternative:"",next:""},revealed:false};closeModal();saveCurrent(true);renderMystery();announce("Case reset");}
-  function openEvidenceNoteModal(){openModal(`<div class="modal-header"><div><p class="eyebrow">Sticky note</p><h2 id="modal-title">Add your thinking</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><div class="stack"><label class="field"><span>Label</span><input id="note-title" value="My note"></label><label class="field"><span>Observation, inference, claim or question</span><select id="note-type"><option>observation</option><option>inference</option><option>claim</option><option>question</option><option>contradiction</option><option>conclusion</option></select></label><label class="field"><span>Your note</span><textarea id="note-text"></textarea></label><button class="button" data-action="evidence-save-note">Place on board</button></div>`);}
-  function saveEvidenceNote(){const text=document.querySelector("#note-text")?.value.trim();if(!text)return announce("Write something on the note first");const id=uid("note"),n=current.data.placed.length;current.data.notes.push({id,title:document.querySelector("#note-title").value||"My note",type:document.querySelector("#note-type").value,text});current.data.placed.push({id,x:8+(n%3)*28,y:10+Math.floor(n/3)*22,group:"gold"});closeModal();queueSave();renderEvidence();}
-  function openInventorBriefModal(){openModal(`<div class="modal-header"><div><p class="eyebrow">Custom brief</p><h2 id="modal-title">What needs solving?</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><div class="stack"><label class="field"><span>Brief title</span><input id="brief-title"></label><label class="field"><span>Practical problem</span><textarea id="brief-problem"></textarea></label><label class="field"><span>Limits</span><input id="brief-limits" placeholder="For example: use no more than six parts"></label><fieldset class="panel"><legend>Choose three priorities</legend><div class="chip-list">${["strength","stability","light","waterproof","movement","ease","visibility","control","parts"].map(p=>`<label class="chip"><input type="checkbox" name="brief-priority" value="${p}">${p}</label>`).join("")}</div></fieldset><button class="button" data-action="inventor-save-custom">Begin designing</button></div>`);}
-  function saveInventorBrief(){const title=document.querySelector("#brief-title")?.value.trim(),problem=document.querySelector("#brief-problem")?.value.trim(),priorities=[...document.querySelectorAll('[name="brief-priority"]:checked')].map(x=>x.value);if(!title||!problem||priorities.length<2)return announce("Add a title, a problem and at least two priorities");closeModal();startInventor(null,{id:uid("brief"),title,problem,priorities:priorities.slice(0,3),limits:document.querySelector("#brief-limits")?.value||""});}
-  function chooseConsequence(id){const d=current.data,s=scenarioData(),node=d.currentNode==="opening"?s.opening:s.nodes[d.currentNode],choice=node.choices.find(c=>c.id===id);if(!choice)return;d.history.push({label:choice.label,immediate:choice.immediate,unintended:choice.unintended,perspectives:choice.perspectives||{}});tone();if(choice.ending){d.ending=choice.ending;d.complete=true;d.stage="review";saveCurrent(true);renderReview("consequence");}else{d.currentNode=choice.next;queueSave();renderConsequence();}}
-  function validateScenario(){const c=current.data.creator;const labels={title:"scenario title",setting:"opening situation",aLabel:"first choice A",aImmediate:"result of choice A",aUnexpected:"unintended consequence A",aNext:"second decision A",a1Label:"final choice A1",a1End:"ending A1",a2Label:"final choice A2",a2End:"ending A2",bLabel:"first choice B",bImmediate:"result of choice B",bUnexpected:"unintended consequence B",bNext:"second decision B",b1Label:"final choice B1",b1End:"ending B1",b2Label:"final choice B2",b2End:"ending B2"};const errors=Object.entries(labels).filter(([k])=>!String(c[k]||"").trim()).map(([,v])=>v);if(errors.length)return renderScenarioCreator(errors);const scenario=makeCustomScenario(c);current.title=scenario.title;current.data={stage:"play",scenarioId:null,customScenario:scenario,currentNode:"opening",history:[],complete:false,reflection:{intend:"",unexpected:"",benefit:"",difficulty:"",same:"",newOption:""}};saveCurrent(true);renderConsequence();announce("Branches checked — your scenario is ready to play");}
-  function duplicateItem(id){const source=library.items.find(i=>i.id===id);if(!source)return;const copy=deepCopy(source);copy.id=uid(copy.app);copy.title=`${copy.title} — copy`;copy.createdAt=copy.updatedAt=Date.now();library.items.push(copy);persistLibrary();renderLibrary();announce("Creation duplicated");}
-  function renameItemModal(id){const item=library.items.find(i=>i.id===id);if(!item)return;openModal(`<div class="modal-header"><div><p class="eyebrow">Saved work</p><h2 id="modal-title">Rename this creation</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><div class="stack"><label class="field"><span>Title</span><input id="rename-title" value="${escapeHTML(item.title)}"></label><button class="button" data-action="confirm-rename" data-id="${id}">Save new title</button></div>`);}
-  function renameItem(id){const item=library.items.find(i=>i.id===id),title=document.querySelector("#rename-title")?.value.trim();if(!item||!title)return announce("Add a title first");item.title=title;item.updatedAt=Date.now();if(item.data&&"title" in item.data)item.data.title=title;persistLibrary();closeModal();renderLibrary();announce("Creation renamed");}
-  function confirmDelete(id){const item=library.items.find(i=>i.id===id);if(!item)return;openModal(`<div class="modal-header"><div><p class="eyebrow">Delete saved work</p><h2 id="modal-title">Remove “${escapeHTML(item.title)}”?</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><p>This cannot be undone after it is removed from this browser.</p><div class="row wrap"><button class="button danger" data-action="confirm-delete" data-id="${id}">Delete permanently</button><button class="button secondary" data-action="close-modal">Keep it</button></div>`);}
-  function deleteItem(id){library.items=library.items.filter(i=>i.id!==id);persistLibrary();closeModal();renderLibrary();announce("Saved work removed");}
-  function confirmReset(){openModal(`<div class="modal-header"><div><p class="eyebrow">Reset library</p><h2 id="modal-title">Delete every saved creation?</h2></div><button class="modal-close" data-action="close-modal" aria-label="Close">${icon("close")}</button></div><p>This removes all Workshop work from this browser and cannot be undone. Export anything important first.</p><div class="row wrap"><button class="button danger" data-action="confirm-reset">Delete everything</button><button class="button secondary" data-action="close-modal">Cancel</button></div>`);}
-
-  document.addEventListener("pointerdown",event=>{
-    const el=event.target.closest("[data-drag-type]"); if(!el||!current)return;
-    const board=el.closest("[data-board]"); if(!board)return;
-    event.preventDefault();
-    const type=el.dataset.dragType,id=el.dataset.id,rect=board.getBoundingClientRect();
-    drag={type,id,el,board,rect,startX:event.clientX,startY:event.clientY,left:parseFloat(el.style.left)||0,top:parseFloat(el.style.top)||0,moved:false};
-    el.setPointerCapture?.(event.pointerId);
-  });
-  document.addEventListener("pointermove",event=>{
-    if(!drag)return; const dx=(event.clientX-drag.startX)/drag.rect.width*100,dy=(event.clientY-drag.startY)/drag.rect.height*100;
-    if(Math.abs(dx)+Math.abs(dy)>.5)drag.moved=true;
-    const x=Math.max(0,Math.min(86,drag.left+dx)),y=Math.max(0,Math.min(86,drag.top+dy));
-    drag.el.style.left=`${x}%`;drag.el.style.top=`${y}%`;
-    const list=drag.type==="world"?current.data.locations:drag.type==="evidence"?current.data.placed:current.data.parts;
-    const item=list.find(x=>x.id===drag.id);if(item){item.x=Number(x.toFixed(2));item.y=Number(y.toFixed(2));}
-  });
-  document.addEventListener("pointerup",event=>{if(!drag)return;if(drag.moved){event.preventDefault();event.stopPropagation();queueSave(true);window.setTimeout(()=>{drag=null;},0);}else drag=null;},{capture:true});
-
-  document.addEventListener("keydown",event=>{
-    if(event.key==="Escape"){if(modalRoot.innerHTML)closeModal();else if(document.body.classList.contains("presentation-mode"))document.querySelector('[data-action="exit-present"]')?.click();return;}
-    const el=event.target.closest?.("[data-drag-type]");
-    if(!el||!current||!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key))return;
-    event.preventDefault();
-    const type=el.dataset.dragType,id=el.dataset.id,list=type==="world"?current.data.locations:type==="evidence"?current.data.placed:current.data.parts,item=list.find(x=>x.id===id);
-    if(!item)return;
-    const amount=event.shiftKey?5:2;
-    if(event.key==="ArrowLeft")item.x=Math.max(0,item.x-amount);
-    if(event.key==="ArrowRight")item.x=Math.min(86,item.x+amount);
-    if(event.key==="ArrowUp")item.y=Math.max(0,item.y-amount);
-    if(event.key==="ArrowDown")item.y=Math.min(86,item.y+amount);
-    el.style.left=`${item.x}%`;el.style.top=`${item.y}%`;queueSave(true);
-  });
-  document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement)document.body.classList.remove("presentation-mode");});
-
-  applySettings();
+  window.WorkshopApp={findMovable,move,drop,zoom};
   renderHome();
-  if(!localStorage.getItem(ONBOARDING_KEY)) window.setTimeout(()=>onboarding(0),300);
 })();
